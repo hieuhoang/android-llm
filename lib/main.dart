@@ -20,8 +20,29 @@ class LlmTextApp extends StatelessWidget {
   }
 }
 
-class PromptScreen extends StatelessWidget {
+class PromptScreen extends StatefulWidget {
   const PromptScreen({super.key});
+
+  @override
+  State<PromptScreen> createState() => _PromptScreenState();
+}
+
+class _PromptScreenState extends State<PromptScreen> {
+  final _promptController = TextEditingController();
+  String _output = 'Generated text will appear here.';
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    super.dispose();
+  }
+
+  void _generate() {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _output = 'No model is connected yet. Text generation is not available.';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,16 +62,25 @@ class PromptScreen extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
-                  const TextField(
-                    key: Key('prompt-input'),
+                  TextField(
+                    key: const Key('prompt-input'),
+                    controller: _promptController,
                     minLines: 4,
                     maxLines: 8,
-                    decoration: InputDecoration(
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
                       hintText:
                           'Enter the text you want the model to respond to...',
                       border: OutlineInputBorder(),
                       alignLabelWithHint: true,
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: _promptController.text.trim().isEmpty
+                        ? null
+                        : _generate,
+                    child: const Text('Generate'),
                   ),
                   const SizedBox(height: 24),
                   Text(
@@ -71,7 +101,7 @@ class PromptScreen extends StatelessWidget {
                     ),
                     alignment: Alignment.topLeft,
                     child: Text(
-                      'Generated text will appear here.',
+                      _output,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
