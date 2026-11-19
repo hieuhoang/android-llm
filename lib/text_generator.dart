@@ -51,9 +51,13 @@ class LocalTextGenerator implements TextGenerator {
   LocalTextGenerator({LlamaEngine? engine})
     : _engine = engine ?? LlamaEngine(LlamaBackend());
 
-  static const _contextSize = 2048;
+  static int _contextSizeFor(ModelChoice model) =>
+      model == ModelChoice.qwen3 ? 2048 : 4096;
   final LlamaEngine _engine;
-  late final _session = ChatSession(_engine, maxContextTokens: _contextSize);
+  late final _session = ChatSession(
+    _engine,
+    maxContextTokens: _contextSizeFor(ModelChoice.qwen3),
+  );
   static const _downloads = MethodChannel('llm_text_app/model_download');
   ModelDownloadCancelToken? _downloadCancel;
   ModelChoice? _loadedModel;
@@ -177,7 +181,7 @@ class LocalTextGenerator implements TextGenerator {
               ? ModelSource.path(paths[1], format: ModelFormat.gguf)
               : null,
         ),
-        params: const ModelParams(contextSize: _contextSize, gpuLayers: 0),
+        params: ModelParams(contextSize: _contextSizeFor(model), gpuLayers: 0),
         download: ModelLoadOptions(cancelToken: cancel),
       );
       _loadedModel = model;
@@ -197,6 +201,7 @@ class LocalTextGenerator implements TextGenerator {
     if (model == ModelChoice.qwen3 && attachments.isNotEmpty) {
       throw ArgumentError('The selected model does not support attachments.');
     }
+    _session.maxContextTokens = _contextSizeFor(model);
     if (model == ModelChoice.qwen3) {
       final history = _session.history;
       _session.reset();

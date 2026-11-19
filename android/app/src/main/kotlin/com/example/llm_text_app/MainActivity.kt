@@ -74,30 +74,41 @@ class MainActivity : FlutterActivity() {
                                                 "${stat.st_ctim.tv_sec}:${stat.st_ctim.tv_nsec}"
                                         }
                                         val cacheKey = "verified_$name"
-                                        val initialIdentity = identity()
+                                        var initialIdentity = identity()
                                         check(generation == verificationGeneration.get()) { "Model verification stopped." }
                                         if (preferences.getString(cacheKey, null) == initialIdentity) {
                                             Log.i("ModelVerification", "Reusing verified download: $name")
                                             expected
                                         } else {
                                             check(preferences.edit().remove(cacheKey).commit()) { "Could not clear model verification." }
-                                            val digest = MessageDigest.getInstance("SHA-256")
-                                            val buffer = ByteArray(256 * 1024)
-                                            while (true) {
+                                            Log.i("ModelVerification", "Verifying download: $name")
+                                            for (attempt in 0..1) {
+                                                val digest = MessageDigest.getInstance("SHA-256")
+                                                val buffer = ByteArray(256 * 1024)
+                                                while (true) {
+                                                    check(generation == verificationGeneration.get()) { "Model verification stopped." }
+                                                    val count = input.read(buffer)
+                                                    if (count < 0) break
+                                                    digest.update(buffer, 0, count)
+                                                }
                                                 check(generation == verificationGeneration.get()) { "Model verification stopped." }
-                                                val count = input.read(buffer)
-                                                if (count < 0) break
-                                                digest.update(buffer, 0, count)
+                                                val finalIdentity = identity()
+                                                if (finalIdentity != initialIdentity) {
+                                                    check(attempt == 0) { "Model file changed during verification: $name." }
+                                                    Log.i("ModelVerification", "File changed; retrying verification: $name")
+                                                    initialIdentity = finalIdentity
+                                                    input.channel.position(0)
+                                                    continue
+                                                }
+                                                val actual = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                                                check(actual == expected) { "Checksum mismatch for $name." }
+                                                check(preferences.edit().putString(cacheKey, initialIdentity).commit()) {
+                                                    "Could not save model verification."
+                                                }
+                                                Log.i("ModelVerification", "Verified download: $name")
+                                                return@use actual
                                             }
-                                            check(generation == verificationGeneration.get()) { "Model verification stopped." }
-                                            check(identity() == initialIdentity) { "Model file changed during verification: $name." }
-                                            val actual = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                                            check(actual == expected) { "Checksum mismatch for $name." }
-                                            check(preferences.edit().putString(cacheKey, initialIdentity).commit()) {
-                                                "Could not save model verification."
-                                            }
-                                            Log.i("ModelVerification", "Verified download: $name")
-                                            actual
+                                            error("Model verification did not complete: $name.")
                                         }
                                     }
                                     runOnUiThread { result.success(checksum) }

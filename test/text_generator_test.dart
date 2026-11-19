@@ -94,6 +94,36 @@ class RecordingEngine extends LlamaEngine {
 }
 
 void main() {
+  for (final model in [
+    ModelChoice.omniQ2,
+    ModelChoice.omniQ4,
+    ModelChoice.omniQ8,
+  ]) {
+    test(
+      '$model retains more history and switches back to Qwen3 limits',
+      () async {
+        final engine = RecordingEngine()
+          ..tokensPerMessage = 600
+          ..replies.addAll(['A1', 'A2', 'A3', 'A4']);
+        final generator = LocalTextGenerator(engine: engine);
+
+        await generator.generate('P1', model: model).drain<void>();
+        await generator.generate('P2', model: model).drain<void>();
+        await generator.generate('P3', model: model).drain<void>();
+        expect(engine.requests.last.map((message) => message.content), [
+          'P1',
+          'A1',
+          'P2',
+          'A2',
+          'P3',
+        ]);
+
+        await generator.generate('P4', model: ModelChoice.qwen3).drain<void>();
+        expect(engine.requests.last.map((message) => message.content), ['P4']);
+      },
+    );
+  }
+
   test(
     'follow-ups include previous turns and trim the oldest when full',
     () async {
