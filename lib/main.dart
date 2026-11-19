@@ -91,7 +91,7 @@ class _PromptScreenState extends State<PromptScreen> {
         _progress = null;
       });
       await for (final text in _generator.generate(prompt)) {
-        if (!mounted || _cancelled) break;
+        if (!mounted) break;
         setState(() => _output += text);
       }
       if (mounted && !_cancelled) {

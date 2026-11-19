@@ -1,8 +1,10 @@
 # LLM Text
 
 A Flutter app that runs Qwen3-0.6B Q8_0 locally using llamadart and llama.cpp.
-Enter a prompt and tap **Generate**. Each prompt is independent; previous
-prompts are not included in subsequent requests.
+Enter a prompt and tap **Generate**. Previous prompts and responses are included
+in later requests while they fit in the context window; the oldest turns are
+removed as needed. Conversation history is kept in memory and is lost when the
+app restarts. A stopped response may be retained as a partial turn.
 
 On Android 10 or later, the app downloads the 639 MB model from Hugging Face to
 the public Downloads folder using Android's Download Manager. It verifies the
