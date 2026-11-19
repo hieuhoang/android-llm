@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.util.Log
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -57,22 +59,47 @@ class MainActivity : FlutterActivity() {
                         }
                         "verify" -> {
                             val name = requireNotNull(key)
+                            val expected = requireNotNull(call.argument<String>("checksum"))
+                            val id = downloadId(name)
                             val descriptor = requireNotNull(modelDescriptors[name]) { "Model file is not open: $name" }
                             val path = "/proc/self/fd/${descriptor.fd}"
                             val generation = verificationGeneration.incrementAndGet()
                             thread(name = "model-checksum") {
                                 try {
-                                    val digest = MessageDigest.getInstance("SHA-256")
-                                    FileInputStream(path).use { input ->
-                                        val buffer = ByteArray(256 * 1024)
-                                        while (true) {
+                                    val checksum = FileInputStream(path).use { input ->
+                                        fun identity(): String {
+                                            val stat = Os.fstat(input.fd)
+                                            return "$id:$expected:${stat.st_dev}:${stat.st_ino}:${stat.st_size}:" +
+                                                "${stat.st_mtim.tv_sec}:${stat.st_mtim.tv_nsec}:" +
+                                                "${stat.st_ctim.tv_sec}:${stat.st_ctim.tv_nsec}"
+                                        }
+                                        val cacheKey = "verified_$name"
+                                        val initialIdentity = identity()
+                                        check(generation == verificationGeneration.get()) { "Model verification stopped." }
+                                        if (preferences.getString(cacheKey, null) == initialIdentity) {
+                                            Log.i("ModelVerification", "Reusing verified download: $name")
+                                            expected
+                                        } else {
+                                            check(preferences.edit().remove(cacheKey).commit()) { "Could not clear model verification." }
+                                            val digest = MessageDigest.getInstance("SHA-256")
+                                            val buffer = ByteArray(256 * 1024)
+                                            while (true) {
+                                                check(generation == verificationGeneration.get()) { "Model verification stopped." }
+                                                val count = input.read(buffer)
+                                                if (count < 0) break
+                                                digest.update(buffer, 0, count)
+                                            }
                                             check(generation == verificationGeneration.get()) { "Model verification stopped." }
-                                            val count = input.read(buffer)
-                                            if (count < 0) break
-                                            digest.update(buffer, 0, count)
+                                            check(identity() == initialIdentity) { "Model file changed during verification: $name." }
+                                            val actual = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                                            check(actual == expected) { "Checksum mismatch for $name." }
+                                            check(preferences.edit().putString(cacheKey, initialIdentity).commit()) {
+                                                "Could not save model verification."
+                                            }
+                                            Log.i("ModelVerification", "Verified download: $name")
+                                            actual
                                         }
                                     }
-                                    val checksum = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
                                     runOnUiThread { result.success(checksum) }
                                 } catch (error: Exception) {
                                     runOnUiThread { result.error("model_verification", error.message, null) }

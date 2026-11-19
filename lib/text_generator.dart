@@ -158,6 +158,7 @@ class LocalTextGenerator implements TextGenerator {
         try {
           digest = await _downloads.invokeMethod<String>('verify', {
             'key': key,
+            'checksum': checksum,
           });
         } finally {
           _verifying = false;

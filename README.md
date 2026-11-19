@@ -24,9 +24,10 @@ The Android build time appears at the top of the app in local time. It identifie
 compiled APK, not subsequent Flutter hot reloads.
 
 On Android 10 or later, the app downloads models from Hugging Face to
-the public Downloads folder using Android's Download Manager. It verifies the
-SHA-256 checksum and reads the public file directly; it does not keep a private
-copy. Qwen3 is 639 MB; Omni's model and shared projector total about 2.92 GB
+the public Downloads folder using Android's Download Manager. It verifies each
+download's SHA-256 checksum once, then reuses that result unless the download,
+expected checksum, or file metadata changes. Files are read directly; the app
+does not keep a private copy. Qwen3 is 639 MB; Omni's model and shared projector total about 2.92 GB
 (Q2), 3.64 GB (Q4), or 5.15 GB (Q8), and can exceed the tablet's available
 memory. Lower quantization saves memory but can reduce quality; Q4 and Q8 need
 substantially more memory than Q2. Downloads are retained when switching models,
