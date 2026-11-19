@@ -1,40 +1,107 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:llm_text_app/main.dart';
+import 'package:llm_text_app/text_generator.dart';
+
+class FakeGenerator implements TextGenerator {
+  final loading = Completer<void>();
+  final output = StreamController<String>();
+  void Function(double?)? progress;
+  String? prompt;
+  bool cancelled = false;
+
+  @override
+  Future<void> load(void Function(double?) onProgress) {
+    progress = onProgress;
+    return loading.future;
+  }
+
+  @override
+  Stream<String> generate(String prompt) {
+    this.prompt = prompt;
+    return output.stream;
+  }
+
+  @override
+  Future<void> cancel() async {
+    cancelled = true;
+  }
+
+  @override
+  Future<void> dispose() async {
+    await output.close();
+  }
+}
 
 void main() {
-  testWidgets('generating requires a prompt and reports no model', (
-    WidgetTester tester,
+  testWidgets('loads model and streams output for a nonempty prompt', (
+    tester,
   ) async {
-    await tester.pumpWidget(const LlmTextApp());
-
-    expect(find.byKey(const Key('prompt-input')), findsOneWidget);
-    expect(find.byKey(const Key('output-area')), findsOneWidget);
-    expect(find.text('Generated text will appear here.'), findsOneWidget);
-    expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-      isNull,
-    );
-
+    final generator = FakeGenerator();
+    await tester.pumpWidget(LlmTextApp(generator: generator));
+    final button = find.widgetWithText(FilledButton, 'Generate');
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
     await tester.enterText(find.byKey(const Key('prompt-input')), '   ');
     await tester.pump();
-    expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-      isNull,
-    );
-    await tester.enterText(
-      find.byKey(const Key('prompt-input')),
-      'Summarize this article',
-    );
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+
+    await tester.enterText(find.byKey(const Key('prompt-input')), ' Hello ');
     await tester.pump();
-    expect(find.text('Summarize this article'), findsOneWidget);
+    await tester.tap(button);
+    await tester.pump();
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+    generator.progress!(0.5);
+    await tester.pump();
+    expect(find.text('Downloading model: 50%'), findsOneWidget);
+
+    generator.loading.complete();
+    await tester.pump();
+    expect(generator.prompt, 'Hello');
+    generator.output.add('Hi');
+    await tester.pump();
+    expect(find.text('Hi'), findsOneWidget);
+    generator.output.add(' there');
+    await tester.pump();
+    expect(find.text('Hi there'), findsOneWidget);
+    await generator.output.close();
+    await tester.pump();
+    expect(find.text('Ready'), findsOneWidget);
+    expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+  });
+
+  testWidgets('displays a loading error and allows retry', (tester) async {
+    final generator = FakeGenerator();
+    await tester.pumpWidget(LlmTextApp(generator: generator));
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Hello');
+    await tester.pump();
     await tester.tap(find.text('Generate'));
     await tester.pump();
+    generator.loading.completeError(Exception('Download failed'));
+    await tester.pump();
+    expect(find.textContaining('Download failed'), findsOneWidget);
     expect(
-      find.text('No model is connected yet. Text generation is not available.'),
-      findsOneWidget,
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNotNull,
     );
-    expect(find.text('Generated text will appear here.'), findsNothing);
+  });
+
+  testWidgets('stop cancels loading and leaves the prompt available', (
+    tester,
+  ) async {
+    final generator = FakeGenerator();
+    await tester.pumpWidget(LlmTextApp(generator: generator));
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Hello');
+    await tester.pump();
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+    expect(generator.cancelled, isTrue);
+    generator.loading.completeError(Exception('Cancelled'));
+    await tester.pump();
+    expect(find.text('Stopped. Tap Generate to retry.'), findsOneWidget);
+    expect(find.text('Hello'), findsOneWidget);
   });
 }

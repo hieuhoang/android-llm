@@ -1,11 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import 'text_generator.dart';
 
 void main() {
   runApp(const LlmTextApp());
 }
 
 class LlmTextApp extends StatelessWidget {
-  const LlmTextApp({super.key});
+  const LlmTextApp({super.key, this.generator});
+
+  final TextGenerator? generator;
 
   @override
   Widget build(BuildContext context) {
@@ -15,13 +21,15 @@ class LlmTextApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5367D5)),
         useMaterial3: true,
       ),
-      home: const PromptScreen(),
+      home: PromptScreen(generator: generator),
     );
   }
 }
 
 class PromptScreen extends StatefulWidget {
-  const PromptScreen({super.key});
+  const PromptScreen({super.key, this.generator});
+
+  final TextGenerator? generator;
 
   @override
   State<PromptScreen> createState() => _PromptScreenState();
@@ -29,19 +37,91 @@ class PromptScreen extends StatefulWidget {
 
 class _PromptScreenState extends State<PromptScreen> {
   final _promptController = TextEditingController();
+  late final TextGenerator _generator =
+      widget.generator ?? LocalTextGenerator();
   String _output = 'Generated text will appear here.';
+  String _status = 'Model downloads on first use (639 MB).';
+  bool _busy = false;
+  bool _cancelled = false;
+  double? _progress;
 
   @override
   void dispose() {
+    unawaited(
+      _disposeGenerator().catchError((Object error, StackTrace stack) {
+        FlutterError.reportError(
+          FlutterErrorDetails(exception: error, stack: stack),
+        );
+      }),
+    );
     _promptController.dispose();
     super.dispose();
   }
 
-  void _generate() {
+  Future<void> _disposeGenerator() async {
+    await _generator.dispose();
+  }
+
+  Future<void> _generate() async {
+    final prompt = _promptController.text.trim();
+    if (_busy || prompt.isEmpty) return;
     FocusScope.of(context).unfocus();
     setState(() {
-      _output = 'No model is connected yet. Text generation is not available.';
+      _busy = true;
+      _cancelled = false;
+      _progress = null;
+      _status = 'Preparing model (first download: 639 MB)...';
+      _output = '';
     });
+    try {
+      await _generator.load((progress) {
+        if (!mounted || _cancelled) return;
+        setState(() {
+          _progress = progress;
+          _status = progress == null
+              ? 'Preparing model...'
+              : 'Downloading model: ${(progress * 100).toStringAsFixed(0)}%';
+        });
+      });
+      if (!mounted || _cancelled) return;
+      setState(() {
+        _status = 'Generating...';
+        _progress = null;
+      });
+      await for (final text in _generator.generate(prompt)) {
+        if (!mounted || _cancelled) break;
+        setState(() => _output += text);
+      }
+      if (mounted && !_cancelled) {
+        setState(() {
+          _status = 'Ready';
+          if (_output.isEmpty) _output = 'The model returned no text.';
+        });
+      }
+    } catch (error) {
+      if (mounted && !_cancelled) {
+        setState(() => _status = 'Error: $error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          if (_cancelled) _status = 'Stopped. Tap Generate to retry.';
+        });
+      }
+    }
+  }
+
+  Future<void> _stop() async {
+    setState(() {
+      _cancelled = true;
+      _status = 'Stopping...';
+    });
+    try {
+      await _generator.cancel();
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Could not stop: $error');
+    }
   }
 
   @override
@@ -77,11 +157,21 @@ class _PromptScreenState extends State<PromptScreen> {
                   ),
                   const SizedBox(height: 12),
                   FilledButton(
-                    onPressed: _promptController.text.trim().isEmpty
+                    onPressed: _busy || _promptController.text.trim().isEmpty
                         ? null
                         : _generate,
                     child: const Text('Generate'),
                   ),
+                  if (_busy) ...[
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(value: _progress),
+                    TextButton(
+                      onPressed: _cancelled ? null : _stop,
+                      child: const Text('Stop'),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Text(_status, key: const Key('status')),
                   const SizedBox(height: 24),
                   Text(
                     'Output',
