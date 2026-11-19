@@ -36,6 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   llamadart: ^0.20.1
   llamadart_llama_cpp_flutter: ^0.20.1
+  file_picker: ^13.4.0
+  record: ^7.2.0
+  path_provider: ^2.1.6
+  crypto: ^3.0.8
 
 dev_dependencies:
   flutter_test:

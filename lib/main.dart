@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'media_input.dart';
 import 'text_generator.dart';
 
 void main() {
@@ -10,9 +11,10 @@ void main() {
 }
 
 class LlmTextApp extends StatelessWidget {
-  const LlmTextApp({super.key, this.generator});
+  const LlmTextApp({super.key, this.generator, this.media});
 
   final TextGenerator? generator;
+  final MediaInput? media;
 
   @override
   Widget build(BuildContext context) {
@@ -22,24 +24,26 @@ class LlmTextApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5367D5)),
         useMaterial3: true,
       ),
-      home: PromptScreen(generator: generator),
+      home: PromptScreen(generator: generator, media: media),
     );
   }
 }
 
 class PromptScreen extends StatefulWidget {
-  const PromptScreen({super.key, this.generator});
+  const PromptScreen({super.key, this.generator, this.media});
 
   final TextGenerator? generator;
+  final MediaInput? media;
 
   @override
   State<PromptScreen> createState() => _PromptScreenState();
 }
 
 class _ConversationTurn {
-  _ConversationTurn(this.prompt);
+  _ConversationTurn(this.prompt, this.attachments);
 
   final String prompt;
+  final List<PromptAttachment> attachments;
   String reasoning = '';
   String response = '';
   String? note;
@@ -51,8 +55,13 @@ class _PromptScreenState extends State<PromptScreen> {
   late final TextGenerator _generator =
       widget.generator ?? LocalTextGenerator();
   final _conversation = <_ConversationTurn>[];
-  String _status = 'Model downloads on first use (639 MB).';
+  late final _media = widget.media ?? MediaInput();
+  final _attachments = <PromptAttachment>[];
+  ModelChoice _model = ModelChoice.qwen3;
+  String _status = 'Models download on first use.';
   bool _busy = false;
+  bool _mediaBusy = false;
+  bool _recording = false;
   bool _enableReasoning = true;
   bool _cancelled = false;
   double? _progress;
@@ -82,12 +91,19 @@ class _PromptScreenState extends State<PromptScreen> {
 
   Future<void> _disposeGenerator() async {
     await _generator.dispose();
+    await _media.dispose();
   }
 
   Future<void> _generate() async {
     final prompt = _promptController.text.trim();
-    if (_busy || prompt.isEmpty) return;
-    final turn = _ConversationTurn(prompt);
+    if (_busy ||
+        _mediaBusy ||
+        _recording ||
+        (prompt.isEmpty && _attachments.isEmpty) ||
+        (_model == ModelChoice.qwen3 && _attachments.isNotEmpty)) {
+      return;
+    }
+    final turn = _ConversationTurn(prompt, List.of(_attachments));
     FocusScope.of(context).unfocus();
     setState(() {
       _conversation.add(turn);
@@ -95,7 +111,7 @@ class _PromptScreenState extends State<PromptScreen> {
       _cancelled = false;
       _stopError = null;
       _progress = null;
-      _status = 'Preparing model (first download: 639 MB)...';
+      _status = 'Preparing model...';
     });
     try {
       await _generator.load((progress) {
@@ -106,7 +122,7 @@ class _PromptScreenState extends State<PromptScreen> {
               ? 'Preparing model...'
               : 'Downloading model: ${(progress * 100).toStringAsFixed(0)}%';
         });
-      });
+      }, model: _model);
       if (!mounted || _cancelled) return;
       setState(() {
         _status = 'Generating...';
@@ -115,6 +131,8 @@ class _PromptScreenState extends State<PromptScreen> {
       await for (final chunk in _generator.generate(
         prompt,
         enableReasoning: _enableReasoning,
+        model: _model,
+        attachments: turn.attachments,
       )) {
         if (!mounted) break;
         setState(() {
@@ -149,6 +167,7 @@ class _PromptScreenState extends State<PromptScreen> {
       if (mounted) {
         setState(() {
           _promptController.clear();
+          _attachments.clear();
           _busy = false;
           if (_cancelled) {
             _status = _stopError ?? 'Stopped.';
@@ -158,6 +177,48 @@ class _PromptScreenState extends State<PromptScreen> {
           }
         });
       }
+    }
+  }
+
+  Future<void> _pick(AttachmentKind kind) async {
+    setState(() => _mediaBusy = true);
+    try {
+      final attachment = await _media.pick(kind);
+      if (mounted && attachment != null) {
+        setState(() => _attachments.add(attachment));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Could not select file: $error');
+    } finally {
+      if (mounted) setState(() => _mediaBusy = false);
+    }
+  }
+
+  Future<void> _toggleRecording() async {
+    setState(() => _mediaBusy = true);
+    try {
+      if (_recording) {
+        final attachment = await _media.stopRecording();
+        if (mounted) {
+          setState(() {
+            _recording = false;
+            _attachments.add(attachment);
+            _status = 'Recording attached.';
+          });
+        }
+      } else {
+        await _media.startRecording();
+        if (mounted) {
+          setState(() {
+            _recording = true;
+            _status = 'Recording...';
+          });
+        }
+      }
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Recording error: $error');
+    } finally {
+      if (mounted) setState(() => _mediaBusy = false);
     }
   }
 
@@ -215,6 +276,34 @@ class _PromptScreenState extends State<PromptScreen> {
                     },
                   ),
                   const SizedBox(height: 12),
+                  DropdownButtonFormField<ModelChoice>(
+                    initialValue: _model,
+                    decoration: const InputDecoration(labelText: 'Model'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: ModelChoice.qwen3,
+                        child: Text('Qwen3 0.6B (text)'),
+                      ),
+                      DropdownMenuItem(
+                        value: ModelChoice.omni,
+                        child: Text('Qwen2.5 Omni 3B (text, image, audio)'),
+                      ),
+                    ],
+                    onChanged: _busy || _mediaBusy || _recording
+                        ? null
+                        : (value) {
+                            if (value != null) setState(() => _model = value);
+                          },
+                  ),
+                  if (_model == ModelChoice.omni)
+                    const Text(
+                      'Omni downloads 3.64 GB and may exceed available memory. Speech output and reasoning mode are not supported. Qwen Research License: non-commercial use only.',
+                    ),
+                  if (_model == ModelChoice.qwen3 && _attachments.isNotEmpty)
+                    const Text(
+                      'Remove attachments or select Omni to send them. Previous media becomes text placeholders.',
+                    ),
+                  const SizedBox(height: 12),
                   Text(
                     'Prompt',
                     style: Theme.of(context).textTheme.titleMedium,
@@ -235,11 +324,53 @@ class _PromptScreenState extends State<PromptScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  if (_model == ModelChoice.omni) ...[
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        OutlinedButton(
+                          onPressed: _busy || _mediaBusy || _recording
+                              ? null
+                              : () => _pick(AttachmentKind.image),
+                          child: const Text('Add image'),
+                        ),
+                        OutlinedButton(
+                          onPressed: _busy || _mediaBusy || _recording
+                              ? null
+                              : () => _pick(AttachmentKind.audio),
+                          child: const Text('Add audio file'),
+                        ),
+                        OutlinedButton(
+                          onPressed: _busy || _mediaBusy
+                              ? null
+                              : _toggleRecording,
+                          child: Text(
+                            _recording ? 'Stop recording' : 'Record audio',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  for (final attachment in _attachments)
+                    ListTile(
+                      title: Text(
+                        '${attachment.kind.name}: ${attachment.name}',
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Remove attachment',
+                        icon: const Icon(Icons.close),
+                        onPressed: _busy || _mediaBusy || _recording
+                            ? null
+                            : () => setState(
+                                () => _attachments.remove(attachment),
+                              ),
+                      ),
+                    ),
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Enable reasoning'),
-                    value: _enableReasoning,
-                    onChanged: _busy
+                    value: _model == ModelChoice.qwen3 && _enableReasoning,
+                    onChanged: _busy || _model == ModelChoice.omni
                         ? null
                         : (value) => setState(() {
                             _enableReasoning = value ?? false;
@@ -247,7 +378,14 @@ class _PromptScreenState extends State<PromptScreen> {
                     controlAffinity: ListTileControlAffinity.leading,
                   ),
                   FilledButton(
-                    onPressed: _busy || _promptController.text.trim().isEmpty
+                    onPressed:
+                        _busy ||
+                            _mediaBusy ||
+                            _recording ||
+                            (_promptController.text.trim().isEmpty &&
+                                _attachments.isEmpty) ||
+                            (_model == ModelChoice.qwen3 &&
+                                _attachments.isNotEmpty)
                         ? null
                         : _generate,
                     child: const Text('Generate'),
@@ -272,7 +410,11 @@ class _PromptScreenState extends State<PromptScreen> {
                         ),
                       ),
                       TextButton(
-                        onPressed: _busy || _conversation.isEmpty
+                        onPressed:
+                            _busy ||
+                                _mediaBusy ||
+                                _recording ||
+                                _conversation.isEmpty
                             ? null
                             : _clearConversation,
                         child: const Text('Clear conversation'),
@@ -320,6 +462,10 @@ class _PromptScreenState extends State<PromptScreen> {
                                           .labelLarge,
                                     ),
                                     SelectableText(turn.prompt),
+                                    for (final attachment in turn.attachments)
+                                      Text(
+                                        '${attachment.kind.name}: ${attachment.name}',
+                                      ),
                                     const SizedBox(height: 8),
                                     if (turn.reasoning.isNotEmpty) ...[
                                       Text(

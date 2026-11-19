@@ -1,29 +1,42 @@
 # LLM Text
 
-A Flutter app that runs Qwen3-0.6B Q8_0 locally using llamadart and llama.cpp.
+A Flutter app that runs local models using llamadart and llama.cpp. Select
+Qwen3-0.6B Q8_0 for text and reasoning, or Qwen2.5-Omni-3B Q4_K_M for text,
+images and audio input. Omni's speech output is not supported by this runtime.
+Omni is subject to the [Qwen Research License](https://huggingface.co/Qwen/Qwen2.5-Omni-3B/blob/main/LICENSE),
+which permits non-commercial research/evaluation only unless separately licensed.
 Enter a prompt and tap **Generate**. Previous prompts and responses are included
 in later requests while they fit in the context window; the oldest turns are
 removed as needed. Conversation history is kept in memory and is lost when the
 app restarts. The conversation display retains older turns even when they no
 longer fit in the model context. The **Enable reasoning** checkbox controls
-thinking for each new request; it is enabled by default. Generated reasoning is displayed,
+thinking for each new Qwen3 request; it is enabled by default. Omni does not
+support this reasoning mode. Generated reasoning is displayed,
 but excluded from later requests, following Qwen's recommendation. A stopped
 response may be retained as a partial turn; a turn with no final answer is not
-included in later requests. **Clear conversation** clears both the display and
+included in later requests. Switching models retains conversation history; when
+using the text-only model, earlier images and audio become labeled text
+placeholders. **Clear conversation** clears both the display and
 model context without unloading the model. The prompt field is cleared after
 each attempt.
 
 The Android build time appears at the top of the app in local time. It identifies the
 compiled APK, not subsequent Flutter hot reloads.
 
-On Android 10 or later, the app downloads the 639 MB model from Hugging Face to
+On Android 10 or later, the app downloads models from Hugging Face to
 the public Downloads folder using Android's Download Manager. It verifies the
 SHA-256 checksum and reads the public file directly; it does not keep a private
-copy. The system can continue downloading while the app is closed. After
+copy. Qwen3 is 639 MB; Omni's model and projector total about 3.64 GB and can
+exceed the tablet's available memory. The system can continue downloading while the app is closed. After
 download, prompts and generation stay on the device. Use **Stop** to interrupt
 loading or generation. The model runs on CPU with a 2048-token context, up to
 512 output tokens, and, when enabled, a 256-token thinking budget. Longer
 answers may be cut off; thinking mode can be slower.
+
+Omni accepts selected JPG, PNG, GIF or BMP images, WAV, MP3 or FLAC audio files,
+and microphone recordings. Selected media and recordings are copied to the
+app's temporary storage for the current conversation and deleted when the app
+closes normally. Longer audio and images consume context and memory.
 
 ## Run
 

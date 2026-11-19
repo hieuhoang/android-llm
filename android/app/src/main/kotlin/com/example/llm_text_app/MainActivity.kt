@@ -11,7 +11,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private var modelDescriptor: ParcelFileDescriptor? = null
+    private val modelDescriptors = mutableMapOf<String, ParcelFileDescriptor>()
     private val preferences by lazy { getSharedPreferences("model_download", Context.MODE_PRIVATE) }
     private val downloads by lazy { getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager }
 
@@ -30,26 +30,28 @@ class MainActivity : FlutterActivity() {
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                         throw UnsupportedOperationException("Public model downloads require Android 10 or later.")
                     }
+                    val key = call.argument<String>("key")
                     when (call.method) {
-                        "start" -> result.success(startDownload())
-                        "status" -> result.success(downloadStatus())
+                        "start" -> result.success(startDownload(requireNotNull(key)))
+                        "status" -> result.success(downloadStatus(requireNotNull(key)))
                         "open" -> {
-                            modelDescriptor?.close()
-                            val id = downloadId()
-                            modelDescriptor = downloads.openDownloadedFile(id)
-                            result.success(modelDescriptor!!.fd)
+                            val name = requireNotNull(key)
+                            modelDescriptors.remove(name)?.close()
+                            val descriptor = downloads.openDownloadedFile(downloadId(name))
+                            modelDescriptors[name] = descriptor
+                            result.success(descriptor.fd)
                         }
                         "cancel" -> {
-                            val id = preferences.getLong("id", -1)
-                            if (id != -1L && downloadStatus()?.get("status") != DownloadManager.STATUS_SUCCESSFUL) {
+                            val name = requireNotNull(key)
+                            val id = preferences.getLong(preferenceKey(name), -1)
+                            if (id != -1L && downloadStatus(name)?.get("status") != DownloadManager.STATUS_SUCCESSFUL) {
                                 downloads.remove(id)
-                                preferences.edit().remove("id").apply()
+                                preferences.edit().remove(preferenceKey(name)).apply()
                             }
                             result.success(null)
                         }
                         "close" -> {
-                            modelDescriptor?.close()
-                            modelDescriptor = null
+                            closeDescriptors()
                             result.success(null)
                         }
                         else -> result.notImplemented()
@@ -60,34 +62,42 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    private fun downloadId(): Long {
-        val id = preferences.getLong("id", -1)
+    private fun preferenceKey(key: String) = if (key == "qwen3") "id" else "id_$key"
+
+    private fun downloadId(key: String): Long {
+        val id = preferences.getLong(preferenceKey(key), -1)
         check(id != -1L) { "No model download is available." }
         return id
     }
 
-    private fun startDownload(): Long {
-        val existing = preferences.getLong("id", -1)
+    private fun startDownload(key: String): Long {
+        val (repo, revision, filename) = when (key) {
+            "qwen3" -> Triple("Qwen/Qwen3-0.6B-GGUF", "23749fefcc72300e3a2ad315e1317431b06b590a", "Qwen3-0.6B-Q8_0.gguf")
+            "omni" -> Triple("ggml-org/Qwen2.5-Omni-3B-GGUF", "75f1b73b657a50f5092502799457ccb4a4a1f9df", "Qwen2.5-Omni-3B-Q4_K_M.gguf")
+            "omni_projector" -> Triple("ggml-org/Qwen2.5-Omni-3B-GGUF", "75f1b73b657a50f5092502799457ccb4a4a1f9df", "mmproj-Qwen2.5-Omni-3B-Q8_0.gguf")
+            else -> throw IllegalArgumentException("Unknown model file: $key")
+        }
+        val prefKey = preferenceKey(key)
+        val existing = preferences.getLong(prefKey, -1)
         if (existing != -1L) {
-            val status = downloadStatus()
+            val status = downloadStatus(key)
             if (status != null && status["status"] != DownloadManager.STATUS_FAILED) return existing
             if (status != null) downloads.remove(existing)
-            preferences.edit().remove("id").apply()
+            preferences.edit().remove(prefKey).apply()
         }
-        val url = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/" +
-            "23749fefcc72300e3a2ad315e1317431b06b590a/Qwen3-0.6B-Q8_0.gguf"
+        val url = "https://huggingface.co/$repo/resolve/$revision/$filename"
         val request = DownloadManager.Request(Uri.parse(url))
-            .setTitle("Qwen3 0.6B model")
+            .setTitle(filename)
             .setDescription("Downloading the on-device language model")
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Qwen3-0.6B-Q8_0.gguf")
+            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
         val id = downloads.enqueue(request)
-        preferences.edit().putLong("id", id).apply()
+        preferences.edit().putLong(prefKey, id).apply()
         return id
     }
 
-    private fun downloadStatus(): Map<String, Any>? {
-        val cursor = downloads.query(DownloadManager.Query().setFilterById(downloadId()))
+    private fun downloadStatus(key: String): Map<String, Any>? {
+        val cursor = downloads.query(DownloadManager.Query().setFilterById(downloadId(key)))
         cursor.use {
             if (it == null || !it.moveToFirst()) return null
             fun value(column: String): Long = it.getLong(it.getColumnIndexOrThrow(column))
@@ -100,9 +110,13 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun closeDescriptors() {
+        modelDescriptors.values.forEach { it.close() }
+        modelDescriptors.clear()
+    }
+
     override fun onDestroy() {
-        modelDescriptor?.close()
-        modelDescriptor = null
+        closeDescriptors()
         super.onDestroy()
     }
 }

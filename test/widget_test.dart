@@ -4,7 +4,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llm_text_app/main.dart';
+import 'package:llm_text_app/media_input.dart';
 import 'package:llm_text_app/text_generator.dart';
+
+class FakeMediaInput extends MediaInput {
+  @override
+  Future<PromptAttachment?> pick(AttachmentKind kind) async =>
+      PromptAttachment(kind: kind, path: '/test/${kind.name}', name: kind.name);
+
+  @override
+  Future<void> startRecording() async {}
+
+  @override
+  Future<PromptAttachment> stopRecording() async => const PromptAttachment(
+    kind: AttachmentKind.audio,
+    path: '/test/recording.wav',
+    name: 'Microphone recording',
+  );
+}
 
 class FakeGenerator implements TextGenerator {
   final loading = Completer<void>();
@@ -12,11 +29,17 @@ class FakeGenerator implements TextGenerator {
   void Function(double?)? progress;
   String? prompt;
   bool? reasoningEnabled;
+  ModelChoice? model;
+  List<PromptAttachment>? attachments;
   bool cancelled = false;
   bool historyCleared = false;
 
   @override
-  Future<void> load(void Function(double?) onProgress) {
+  Future<void> load(
+    void Function(double?) onProgress, {
+    ModelChoice model = ModelChoice.qwen3,
+  }) {
+    this.model = model;
     progress = onProgress;
     return loading.future;
   }
@@ -25,9 +48,13 @@ class FakeGenerator implements TextGenerator {
   Stream<GenerationChunk> generate(
     String prompt, {
     bool enableReasoning = true,
+    ModelChoice model = ModelChoice.qwen3,
+    List<PromptAttachment> attachments = const [],
   }) {
     this.prompt = prompt;
     reasoningEnabled = enableReasoning;
+    this.model = model;
+    this.attachments = attachments;
     output = StreamController<GenerationChunk>();
     return output!.stream;
   }
@@ -278,5 +305,41 @@ void main() {
     await tester.pump();
     expect(find.text('Partial thought'), findsOneWidget);
     expect(find.text('Stopped; not included in context.'), findsOneWidget);
+  });
+
+  testWidgets('selects Omni, attaches media and records audio', (tester) async {
+    final generator = FakeGenerator();
+    generator.loading.complete();
+    await tester.pumpWidget(
+      LlmTextApp(generator: generator, media: FakeMediaInput()),
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<ModelChoice>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Qwen2.5 Omni 3B (text, image, audio)').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).onChanged,
+      isNull,
+    );
+    await tester.tap(find.text('Add image'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add audio file'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Record audio'));
+    await tester.pumpAndSettle();
+    expect(find.text('Stop recording'), findsOneWidget);
+    await tester.tap(find.text('Stop recording'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.model, ModelChoice.omni);
+    expect(generator.attachments!.map((a) => a.name), [
+      'image',
+      'audio',
+      'Microphone recording',
+    ]);
+    await generator.output!.close();
+    await tester.pump();
   });
 }

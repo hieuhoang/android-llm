@@ -155,6 +155,63 @@ void main() {
     expect(engine.parameters.single!.thinkingBudget, isNull);
   });
 
+  test(
+    'Omni sends media and text-only follow-up replaces it with placeholders',
+    () async {
+      final engine = RecordingEngine()..replies.addAll(['Seen', 'Follow-up']);
+      final generator = LocalTextGenerator(engine: engine);
+      await generator
+          .generate(
+            'Describe',
+            model: ModelChoice.omni,
+            attachments: const [
+              PromptAttachment(
+                kind: AttachmentKind.image,
+                path: '/test/image.jpg',
+                name: 'image.jpg',
+              ),
+              PromptAttachment(
+                kind: AttachmentKind.audio,
+                path: '/test/audio.wav',
+                name: 'audio.wav',
+              ),
+            ],
+          )
+          .drain<void>();
+      expect(
+        engine.requests.first.single.parts.map((part) => part.runtimeType),
+        [LlamaTextContent, LlamaImageContent, LlamaAudioContent],
+      );
+      expect(engine.thinkingModes.first, isFalse);
+      expect(engine.parameters.first!.thinkingBudget, isNull);
+      await generator.generate('Follow up').drain<void>();
+      expect(
+        engine.requests.last.first.content,
+        'Describe\n[Image attached]\n[Audio attached]',
+      );
+      expect(engine.requests.last[1].content, 'Seen');
+    },
+  );
+
+  test('text model rejects new media', () async {
+    final generator = LocalTextGenerator(engine: RecordingEngine());
+    await expectLater(
+      generator
+          .generate(
+            'Question',
+            attachments: const [
+              PromptAttachment(
+                kind: AttachmentKind.image,
+                path: '/test/image.jpg',
+                name: 'image.jpg',
+              ),
+            ],
+          )
+          .drain<void>(),
+      throwsArgumentError,
+    );
+  });
+
   test('reasoning without a final answer is not added to history', () async {
     final engine = RecordingEngine()
       ..replies.addAll(['', 'Next answer'])
