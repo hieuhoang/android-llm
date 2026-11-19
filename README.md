@@ -36,8 +36,12 @@ continue downloading while the app is closed. After
 download, prompts and generation stay on the device. The screen stays on while
 loading or generating; keeping the app in the foreground reduces the chance of
 Android stopping it for memory pressure. Use **Stop** to interrupt loading or
-generation. The models run on CPU with a 2048-token context for Qwen3 and a
-4096-token context for Omni, up to 512 output tokens, and, when enabled, a
+generation. The models run on CPU by default. **Use GPU offloading** requests
+Vulkan GPU inference on Android; the model reloads when this choice changes.
+GPU support, memory use, and speed depend on the device; if loading fails,
+disable GPU offloading to use the CPU. Conversation history is retained when
+switching. The context is 2048 tokens for Qwen3 and 4096 tokens for Omni, with
+up to 512 output tokens, and, when enabled, a
 256-token thinking budget. The larger Omni context uses more memory. Longer
 answers may be cut off; thinking mode can be slower.
 

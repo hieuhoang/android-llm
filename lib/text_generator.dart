@@ -35,6 +35,7 @@ abstract interface class TextGenerator {
   Future<void> load(
     void Function(double?) onProgress, {
     ModelChoice model = ModelChoice.qwen3,
+    bool useGpu = false,
   });
   Stream<GenerationChunk> generate(
     String prompt, {
@@ -61,6 +62,7 @@ class LocalTextGenerator implements TextGenerator {
   static const _downloads = MethodChannel('llm_text_app/model_download');
   ModelDownloadCancelToken? _downloadCancel;
   ModelChoice? _loadedModel;
+  bool? _loadedWithGpu;
   bool _cancelled = false;
   String? _downloading;
   bool _verifying = false;
@@ -69,8 +71,9 @@ class LocalTextGenerator implements TextGenerator {
   Future<void> load(
     void Function(double?) onProgress, {
     ModelChoice model = ModelChoice.qwen3,
+    bool useGpu = false,
   }) async {
-    if (_loadedModel == model) return;
+    if (_loadedModel == model && _loadedWithGpu == useGpu) return;
     if (!Platform.isAndroid) {
       throw UnsupportedError(
         'Public model storage is currently supported on Android only.',
@@ -83,6 +86,7 @@ class LocalTextGenerator implements TextGenerator {
       if (_loadedModel != null) {
         await _engine.unloadModel();
         _loadedModel = null;
+        _loadedWithGpu = null;
       }
       await _downloads.invokeMethod<void>('close');
       final modelFile = switch (model) {
@@ -181,10 +185,15 @@ class LocalTextGenerator implements TextGenerator {
               ? ModelSource.path(paths[1], format: ModelFormat.gguf)
               : null,
         ),
-        params: ModelParams(contextSize: _contextSizeFor(model), gpuLayers: 0),
+        params: ModelParams(
+          contextSize: _contextSizeFor(model),
+          device: useGpu ? ComputeDevice.gpu : ComputeDevice.cpu,
+          gpuLayers: useGpu ? ModelParams.maxGpuLayers : 0,
+        ),
         download: ModelLoadOptions(cancelToken: cancel),
       );
       _loadedModel = model;
+      _loadedWithGpu = useGpu;
     } finally {
       _downloading = null;
       _downloadCancel = null;

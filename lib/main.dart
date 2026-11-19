@@ -64,6 +64,7 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _mediaBusy = false;
   bool _recording = false;
   bool _enableReasoning = true;
+  bool _useGpu = false;
   bool _cancelled = false;
   double? _progress;
   String? _stopError;
@@ -121,15 +122,19 @@ class _PromptScreenState extends State<PromptScreen> {
         screenAwake = true;
       }
       if (!mounted || _cancelled) return;
-      await _generator.load((progress) {
-        if (!mounted || _cancelled) return;
-        setState(() {
-          _progress = progress;
-          _status = progress == null
-              ? 'Preparing model...'
-              : 'Downloading model: ${(progress * 100).toStringAsFixed(0)}%';
-        });
-      }, model: _model);
+      await _generator.load(
+        (progress) {
+          if (!mounted || _cancelled) return;
+          setState(() {
+            _progress = progress;
+            _status = progress == null
+                ? 'Preparing model...'
+                : 'Downloading model: ${(progress * 100).toStringAsFixed(0)}%';
+          });
+        },
+        model: _model,
+        useGpu: _useGpu,
+      );
       if (!mounted || _cancelled) return;
       setState(() {
         _status = 'Generating...';
@@ -399,6 +404,7 @@ class _PromptScreenState extends State<PromptScreen> {
                       ),
                     ),
                   CheckboxListTile(
+                    key: const Key('reasoning-checkbox'),
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Enable reasoning'),
                     value: _model == ModelChoice.qwen3 && _enableReasoning,
@@ -406,6 +412,18 @@ class _PromptScreenState extends State<PromptScreen> {
                         ? null
                         : (value) => setState(() {
                             _enableReasoning = value ?? false;
+                          }),
+                    controlAffinity: ListTileControlAffinity.leading,
+                  ),
+                  CheckboxListTile(
+                    key: const Key('gpu-checkbox'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Use GPU offloading'),
+                    value: _useGpu,
+                    onChanged: _busy || _mediaBusy || _recording
+                        ? null
+                        : (value) => setState(() {
+                            _useGpu = value ?? false;
                           }),
                     controlAffinity: ListTileControlAffinity.leading,
                   ),

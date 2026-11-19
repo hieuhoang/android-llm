@@ -30,6 +30,7 @@ class FakeGenerator implements TextGenerator {
   String? prompt;
   bool? reasoningEnabled;
   ModelChoice? model;
+  bool? useGpu;
   List<PromptAttachment>? attachments;
   bool cancelled = false;
   bool historyCleared = false;
@@ -38,8 +39,10 @@ class FakeGenerator implements TextGenerator {
   Future<void> load(
     void Function(double?) onProgress, {
     ModelChoice model = ModelChoice.qwen3,
+    bool useGpu = false,
   }) {
     this.model = model;
+    this.useGpu = useGpu;
     progress = onProgress;
     return loading.future;
   }
@@ -88,6 +91,51 @@ void main() {
         .setMockMethodCallHandler(buildChannel, null);
   });
 
+  testWidgets('GPU choice is applied on the next generation', (tester) async {
+    final generator = FakeGenerator()..loading.complete();
+    await tester.pumpWidget(LlmTextApp(generator: generator));
+    final gpu = find.byKey(const Key('gpu-checkbox'));
+    expect(tester.widget<CheckboxListTile>(gpu).value, isFalse);
+
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'First');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.useGpu, isFalse);
+    expect(tester.widget<CheckboxListTile>(gpu).onChanged, isNull);
+    generator.output!.add(const GenerationChunk(text: 'First answer'));
+    await generator.output!.close();
+    await tester.pump();
+
+    await tester.ensureVisible(gpu);
+    await tester.tap(gpu);
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Second');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.useGpu, isTrue);
+    generator.output!.add(const GenerationChunk(text: 'Second answer'));
+    await generator.output!.close();
+    await tester.pump();
+    expect(find.text('First answer'), findsOneWidget);
+    expect(find.text('Second answer'), findsOneWidget);
+
+    await tester.ensureVisible(gpu);
+    await tester.tap(gpu);
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Third');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.useGpu, isFalse);
+    await generator.output!.close();
+    await tester.pump();
+  });
+
   testWidgets('loads model and streams output for a nonempty prompt', (
     tester,
   ) async {
@@ -131,7 +179,9 @@ void main() {
     expect(generator.prompt, 'Hello');
     expect(generator.reasoningEnabled, isTrue);
     expect(
-      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).onChanged,
+      tester
+          .widget<CheckboxListTile>(find.byKey(const Key('reasoning-checkbox')))
+          .onChanged,
       isNull,
     );
     generator.output!.add(const GenerationChunk(reasoning: 'Thinking...'));
@@ -160,7 +210,9 @@ void main() {
     await tester.tap(find.text('Enable reasoning'));
     await tester.pump();
     expect(
-      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      tester
+          .widget<CheckboxListTile>(find.byKey(const Key('reasoning-checkbox')))
+          .value,
       isFalse,
     );
     await tester.enterText(find.byKey(const Key('prompt-input')), 'Follow up');
@@ -318,7 +370,9 @@ void main() {
     await tester.tap(find.text('Qwen2.5 Omni 3B Q2_K').last);
     await tester.pumpAndSettle();
     expect(
-      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).onChanged,
+      tester
+          .widget<CheckboxListTile>(find.byKey(const Key('reasoning-checkbox')))
+          .onChanged,
       isNull,
     );
     await tester.tap(find.text('Add image'));
@@ -358,7 +412,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester
-            .widget<CheckboxListTile>(find.byType(CheckboxListTile))
+            .widget<CheckboxListTile>(
+              find.byKey(const Key('reasoning-checkbox')),
+            )
             .onChanged,
         isNull,
       );
