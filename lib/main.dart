@@ -44,6 +44,7 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _busy = false;
   bool _cancelled = false;
   double? _progress;
+  String? _stopError;
 
   @override
   void dispose() {
@@ -69,6 +70,7 @@ class _PromptScreenState extends State<PromptScreen> {
     setState(() {
       _busy = true;
       _cancelled = false;
+      _stopError = null;
       _progress = null;
       _status = 'Preparing model (first download: 639 MB)...';
       _output = '';
@@ -106,7 +108,9 @@ class _PromptScreenState extends State<PromptScreen> {
       if (mounted) {
         setState(() {
           _busy = false;
-          if (_cancelled) _status = 'Stopped. Tap Generate to retry.';
+          if (_cancelled) {
+            _status = _stopError ?? 'Stopped. Tap Generate to retry.';
+          }
         });
       }
     }
@@ -120,7 +124,12 @@ class _PromptScreenState extends State<PromptScreen> {
     try {
       await _generator.cancel();
     } catch (error) {
-      if (mounted) setState(() => _status = 'Could not stop: $error');
+      if (mounted) {
+        setState(() {
+          _stopError = 'Could not stop: $error';
+          _status = _stopError!;
+        });
+      }
     }
   }
 
