@@ -1,8 +1,8 @@
 # LLM Text
 
 A Flutter app that runs local models using llamadart and llama.cpp. Select
-Qwen3-0.6B Q8_0 for text and reasoning, or Qwen2.5-Omni-3B Q4_K_M for text,
-images and audio input. Omni's speech output is not supported by this runtime.
+Qwen3-0.6B Q8_0 for text and reasoning, or Qwen2.5-Omni-3B Q2_K, Q4_K_M or
+Q8_0 for text, images and audio input. Omni's speech output is not supported by this runtime.
 Omni is subject to the [Qwen Research License](https://huggingface.co/Qwen/Qwen2.5-Omni-3B/blob/main/LICENSE),
 which permits non-commercial research/evaluation only unless separately licensed.
 Enter a prompt and tap **Generate**. Previous prompts and responses are included
@@ -26,10 +26,16 @@ compiled APK, not subsequent Flutter hot reloads.
 On Android 10 or later, the app downloads models from Hugging Face to
 the public Downloads folder using Android's Download Manager. It verifies the
 SHA-256 checksum and reads the public file directly; it does not keep a private
-copy. Qwen3 is 639 MB; Omni's model and projector total about 3.64 GB and can
-exceed the tablet's available memory. The system can continue downloading while the app is closed. After
-download, prompts and generation stay on the device. Use **Stop** to interrupt
-loading or generation. The model runs on CPU with a 2048-token context, up to
+copy. Qwen3 is 639 MB; Omni's model and shared projector total about 2.92 GB
+(Q2), 3.64 GB (Q4), or 5.15 GB (Q8), and can exceed the tablet's available
+memory. Lower quantization saves memory but can reduce quality; Q4 and Q8 need
+substantially more memory than Q2. Downloads are retained when switching models,
+and the projector is reused. The system can
+continue downloading while the app is closed. After
+download, prompts and generation stay on the device. The screen stays on while
+loading or generating; keeping the app in the foreground reduces the chance of
+Android stopping it for memory pressure. Use **Stop** to interrupt loading or
+generation. The model runs on CPU with a 2048-token context, up to
 512 output tokens, and, when enabled, a 256-token thinking budget. Longer
 answers may be cut off; thinking mode can be slower.
 

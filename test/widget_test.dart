@@ -315,7 +315,7 @@ void main() {
     );
     await tester.tap(find.byType(DropdownButtonFormField<ModelChoice>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Qwen2.5 Omni 3B (text, image, audio)').last);
+    await tester.tap(find.text('Qwen2.5 Omni 3B Q2_K').last);
     await tester.pumpAndSettle();
     expect(
       tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).onChanged,
@@ -333,7 +333,7 @@ void main() {
     await tester.ensureVisible(find.text('Generate'));
     await tester.tap(find.text('Generate'));
     await tester.pump();
-    expect(generator.model, ModelChoice.omni);
+    expect(generator.model, ModelChoice.omniQ2);
     expect(generator.attachments!.map((a) => a.name), [
       'image',
       'audio',
@@ -342,4 +342,35 @@ void main() {
     await generator.output!.close();
     await tester.pump();
   });
+
+  for (final (label, model) in [
+    ('Qwen2.5 Omni 3B Q4_K_M', ModelChoice.omniQ4),
+    ('Qwen2.5 Omni 3B Q8_0', ModelChoice.omniQ8),
+  ]) {
+    testWidgets('$label selects the model and accepts media', (tester) async {
+      final generator = FakeGenerator()..loading.complete();
+      await tester.pumpWidget(
+        LlmTextApp(generator: generator, media: FakeMediaInput()),
+      );
+      await tester.tap(find.byType(DropdownButtonFormField<ModelChoice>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<CheckboxListTile>(find.byType(CheckboxListTile))
+            .onChanged,
+        isNull,
+      );
+      await tester.tap(find.text('Add image'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Generate'));
+      await tester.tap(find.text('Generate'));
+      await tester.pump();
+      expect(generator.model, model);
+      expect(generator.attachments!.single.kind, AttachmentKind.image);
+      await generator.output!.close();
+      await tester.pump();
+    });
+  }
 }

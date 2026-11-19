@@ -21,6 +21,7 @@ class RecordingEngine extends LlamaEngine {
   final parameters = <GenerationParams?>[];
   bool failNext = false;
   bool failAfterReply = false;
+  int tokensPerMessage = 400;
   String finishReason = 'stop';
 
   @override
@@ -39,8 +40,10 @@ class RecordingEngine extends LlamaEngine {
     bool includeTokenCount = true,
     Map<String, dynamic>? chatTemplateKwargs,
     DateTime? templateNow,
-  }) async =>
-      LlamaChatTemplateResult(prompt: '', tokenCount: messages.length * 400);
+  }) async => LlamaChatTemplateResult(
+    prompt: '',
+    tokenCount: messages.length * tokensPerMessage,
+  );
 
   @override
   Stream<LlamaCompletionChunk> create(
@@ -158,12 +161,19 @@ void main() {
   test(
     'Omni sends media and text-only follow-up replaces it with placeholders',
     () async {
-      final engine = RecordingEngine()..replies.addAll(['Seen', 'Follow-up']);
+      final engine = RecordingEngine()
+        ..replies.addAll([
+          'Seen',
+          'Another answer',
+          'Third answer',
+          'Follow-up',
+        ])
+        ..tokensPerMessage = 200;
       final generator = LocalTextGenerator(engine: engine);
       await generator
           .generate(
             'Describe',
-            model: ModelChoice.omni,
+            model: ModelChoice.omniQ2,
             attachments: const [
               PromptAttachment(
                 kind: AttachmentKind.image,
@@ -184,12 +194,33 @@ void main() {
       );
       expect(engine.thinkingModes.first, isFalse);
       expect(engine.parameters.first!.thinkingBudget, isNull);
+      await generator
+          .generate('Another question', model: ModelChoice.omniQ4)
+          .drain<void>();
+      expect(engine.requests.last.first.parts.map((part) => part.runtimeType), [
+        LlamaTextContent,
+        LlamaImageContent,
+        LlamaAudioContent,
+      ]);
+      await generator
+          .generate('Third question', model: ModelChoice.omniQ8)
+          .drain<void>();
+      expect(engine.requests.last.first.parts.map((part) => part.runtimeType), [
+        LlamaTextContent,
+        LlamaImageContent,
+        LlamaAudioContent,
+      ]);
+      expect(engine.thinkingModes, [false, false, false]);
       await generator.generate('Follow up').drain<void>();
-      expect(
-        engine.requests.last.first.content,
+      expect(engine.requests.last.map((message) => message.content), [
         'Describe\n[Image attached]\n[Audio attached]',
-      );
-      expect(engine.requests.last[1].content, 'Seen');
+        'Seen',
+        'Another question',
+        'Another answer',
+        'Third question',
+        'Third answer',
+        'Follow up',
+      ]);
     },
   );
 

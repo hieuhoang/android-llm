@@ -6,12 +6,18 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.FileInputStream
+import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
     private val modelDescriptors = mutableMapOf<String, ParcelFileDescriptor>()
+    private val verificationGeneration = AtomicInteger()
     private val preferences by lazy { getSharedPreferences("model_download", Context.MODE_PRIVATE) }
     private val downloads by lazy { getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager }
 
@@ -21,6 +27,14 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "buildTimestamp" -> result.success(BuildConfig.BUILD_TIMESTAMP)
+                    "keepScreenOn" -> {
+                        if (call.arguments == true) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -40,6 +54,34 @@ class MainActivity : FlutterActivity() {
                             val descriptor = downloads.openDownloadedFile(downloadId(name))
                             modelDescriptors[name] = descriptor
                             result.success(descriptor.fd)
+                        }
+                        "verify" -> {
+                            val name = requireNotNull(key)
+                            val descriptor = requireNotNull(modelDescriptors[name]) { "Model file is not open: $name" }
+                            val path = "/proc/self/fd/${descriptor.fd}"
+                            val generation = verificationGeneration.incrementAndGet()
+                            thread(name = "model-checksum") {
+                                try {
+                                    val digest = MessageDigest.getInstance("SHA-256")
+                                    FileInputStream(path).use { input ->
+                                        val buffer = ByteArray(256 * 1024)
+                                        while (true) {
+                                            check(generation == verificationGeneration.get()) { "Model verification stopped." }
+                                            val count = input.read(buffer)
+                                            if (count < 0) break
+                                            digest.update(buffer, 0, count)
+                                        }
+                                    }
+                                    val checksum = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                                    runOnUiThread { result.success(checksum) }
+                                } catch (error: Exception) {
+                                    runOnUiThread { result.error("model_verification", error.message, null) }
+                                }
+                            }
+                        }
+                        "cancelVerification" -> {
+                            verificationGeneration.incrementAndGet()
+                            result.success(null)
                         }
                         "cancel" -> {
                             val name = requireNotNull(key)
@@ -73,7 +115,9 @@ class MainActivity : FlutterActivity() {
     private fun startDownload(key: String): Long {
         val (repo, revision, filename) = when (key) {
             "qwen3" -> Triple("Qwen/Qwen3-0.6B-GGUF", "23749fefcc72300e3a2ad315e1317431b06b590a", "Qwen3-0.6B-Q8_0.gguf")
+            "omni_q2" -> Triple("unsloth/Qwen2.5-Omni-3B-GGUF", "9eb5b23b5222c0ec3b81ce932e35a7f21a9b75d3", "Qwen2.5-Omni-3B-Q2_K.gguf")
             "omni" -> Triple("ggml-org/Qwen2.5-Omni-3B-GGUF", "75f1b73b657a50f5092502799457ccb4a4a1f9df", "Qwen2.5-Omni-3B-Q4_K_M.gguf")
+            "omni_q8" -> Triple("ggml-org/Qwen2.5-Omni-3B-GGUF", "75f1b73b657a50f5092502799457ccb4a4a1f9df", "Qwen2.5-Omni-3B-Q8_0.gguf")
             "omni_projector" -> Triple("ggml-org/Qwen2.5-Omni-3B-GGUF", "75f1b73b657a50f5092502799457ccb4a4a1f9df", "mmproj-Qwen2.5-Omni-3B-Q8_0.gguf")
             else -> throw IllegalArgumentException("Unknown model file: $key")
         }
@@ -111,6 +155,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun closeDescriptors() {
+        verificationGeneration.incrementAndGet()
         modelDescriptors.values.forEach { it.close() }
         modelDescriptors.clear()
     }

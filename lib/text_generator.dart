@@ -1,10 +1,9 @@
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:llamadart/llamadart.dart';
 
-enum ModelChoice { qwen3, omni }
+enum ModelChoice { qwen3, omniQ2, omniQ4, omniQ8 }
 
 enum AttachmentKind { image, audio }
 
@@ -60,6 +59,7 @@ class LocalTextGenerator implements TextGenerator {
   ModelChoice? _loadedModel;
   bool _cancelled = false;
   String? _downloading;
+  bool _verifying = false;
 
   @override
   Future<void> load(
@@ -81,26 +81,37 @@ class LocalTextGenerator implements TextGenerator {
         _loadedModel = null;
       }
       await _downloads.invokeMethod<void>('close');
-      final files = model == ModelChoice.qwen3
-          ? [
-              (
-                'qwen3',
-                '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031',
-                639446688,
-              ),
-            ]
-          : [
-              (
-                'omni',
-                '4b0bd358c1e9ec55dd3055ef6d71c958c821533d85916a10cfa89c4552a86e29',
-                2104931648,
-              ),
-              (
-                'omni_projector',
-                '4e6c816cd33f7298d07cb780c136a396631e50e62f6501660271f8c6e302e565',
-                1538031328,
-              ),
-            ];
+      final modelFile = switch (model) {
+        ModelChoice.qwen3 => (
+          'qwen3',
+          '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031',
+          639446688,
+        ),
+        ModelChoice.omniQ2 => (
+          'omni_q2',
+          'c51e4b42d85f0a0c2d7699b1891521b8d050d89911b939a258c31e9a7e50c131',
+          1376856096,
+        ),
+        ModelChoice.omniQ4 => (
+          'omni',
+          '4b0bd358c1e9ec55dd3055ef6d71c958c821533d85916a10cfa89c4552a86e29',
+          2104931648,
+        ),
+        ModelChoice.omniQ8 => (
+          'omni_q8',
+          'c7d8b07c8d8d7a9ed1de1b8df7ac821eb4d259a224bd44310baacfaa5a473d4c',
+          3616087360,
+        ),
+      };
+      final files = [
+        modelFile,
+        if (model != ModelChoice.qwen3)
+          (
+            'omni_projector',
+            '4e6c816cd33f7298d07cb780c136a396631e50e62f6501660271f8c6e302e565',
+            1538031328,
+          ),
+      ];
       final paths = <String>[];
       final totalBytes = files.fold<int>(0, (total, file) => total + file.$3);
       var completedBytes = 0;
@@ -142,15 +153,17 @@ class LocalTextGenerator implements TextGenerator {
           throw StateError('Could not open downloaded file $key.');
         }
         final path = '/proc/self/fd/$fd';
-        final digest = await sha256
-            .bind(
-              File(path).openRead().map((chunk) {
-                if (_cancelled) throw StateError('Model verification stopped.');
-                return chunk;
-              }),
-            )
-            .first;
-        if (digest.toString() != checksum) {
+        _verifying = true;
+        String? digest;
+        try {
+          digest = await _downloads.invokeMethod<String>('verify', {
+            'key': key,
+          });
+        } finally {
+          _verifying = false;
+        }
+        if (_cancelled) throw StateError('Model verification stopped.');
+        if (digest != checksum) {
           throw StateError('Checksum mismatch for $key.');
         }
         paths.add(path);
@@ -268,12 +281,14 @@ class LocalTextGenerator implements TextGenerator {
     if (downloading != null) {
       await _downloads.invokeMethod<void>('cancel', {'key': downloading});
     }
+    if (_verifying) await _downloads.invokeMethod<void>('cancelVerification');
   }
 
   @override
   Future<void> dispose() async {
     _cancelled = true;
     _downloadCancel?.cancel();
+    if (_verifying) await _downloads.invokeMethod<void>('cancelVerification');
     _engine.cancelGeneration();
     await _engine.dispose();
     if (Platform.isAndroid) await _downloads.invokeMethod<void>('close');

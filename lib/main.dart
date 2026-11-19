@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -66,15 +67,15 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _cancelled = false;
   double? _progress;
   String? _stopError;
-  final Future<DateTime> _buildTimestamp =
-      const MethodChannel('llm_text_app/build_info')
-          .invokeMethod<String>('buildTimestamp')
-          .then((timestamp) {
-            if (timestamp == null || timestamp.isEmpty) {
-              throw StateError('Android did not provide a build time.');
-            }
-            return DateTime.parse(timestamp).toLocal();
-          });
+  static const _buildInfo = MethodChannel('llm_text_app/build_info');
+  final Future<DateTime> _buildTimestamp = _buildInfo
+      .invokeMethod<String>('buildTimestamp')
+      .then((timestamp) {
+        if (timestamp == null || timestamp.isEmpty) {
+          throw StateError('Android did not provide a build time.');
+        }
+        return DateTime.parse(timestamp).toLocal();
+      });
 
   @override
   void dispose() {
@@ -113,7 +114,13 @@ class _PromptScreenState extends State<PromptScreen> {
       _progress = null;
       _status = 'Preparing model...';
     });
+    var screenAwake = false;
     try {
+      if (Platform.isAndroid) {
+        await _buildInfo.invokeMethod<void>('keepScreenOn', true);
+        screenAwake = true;
+      }
+      if (!mounted || _cancelled) return;
       await _generator.load((progress) {
         if (!mounted || _cancelled) return;
         setState(() {
@@ -164,6 +171,17 @@ class _PromptScreenState extends State<PromptScreen> {
         });
       }
     } finally {
+      String? screenError;
+      if (screenAwake) {
+        try {
+          await _buildInfo.invokeMethod<void>('keepScreenOn', false);
+        } catch (error, stack) {
+          screenError = 'Could not restore screen timeout: $error';
+          FlutterError.reportError(
+            FlutterErrorDetails(exception: error, stack: stack),
+          );
+        }
+      }
       if (mounted) {
         setState(() {
           _promptController.clear();
@@ -175,6 +193,7 @@ class _PromptScreenState extends State<PromptScreen> {
                 ? 'Stopped; not included in context.'
                 : 'Stopped; partial response retained.';
           }
+          if (screenError != null) _status = screenError;
         });
       }
     }
@@ -285,8 +304,16 @@ class _PromptScreenState extends State<PromptScreen> {
                         child: Text('Qwen3 0.6B (text)'),
                       ),
                       DropdownMenuItem(
-                        value: ModelChoice.omni,
-                        child: Text('Qwen2.5 Omni 3B (text, image, audio)'),
+                        value: ModelChoice.omniQ2,
+                        child: Text('Qwen2.5 Omni 3B Q2_K'),
+                      ),
+                      DropdownMenuItem(
+                        value: ModelChoice.omniQ4,
+                        child: Text('Qwen2.5 Omni 3B Q4_K_M'),
+                      ),
+                      DropdownMenuItem(
+                        value: ModelChoice.omniQ8,
+                        child: Text('Qwen2.5 Omni 3B Q8_0'),
                       ),
                     ],
                     onChanged: _busy || _mediaBusy || _recording
@@ -295,9 +322,14 @@ class _PromptScreenState extends State<PromptScreen> {
                             if (value != null) setState(() => _model = value);
                           },
                   ),
-                  if (_model == ModelChoice.omni)
-                    const Text(
-                      'Omni downloads 3.64 GB and may exceed available memory. Speech output and reasoning mode are not supported. Qwen Research License: non-commercial use only.',
+                  if (_model != ModelChoice.qwen3)
+                    Text(
+                      'Omni model and shared projector total ${switch (_model) {
+                        ModelChoice.omniQ2 => '2.92',
+                        ModelChoice.omniQ4 => '3.64',
+                        ModelChoice.omniQ8 => '5.15',
+                        ModelChoice.qwen3 => throw StateError('Not an Omni model'),
+                      }} GB and may exceed available memory. Lower quantization can affect quality. Speech output and reasoning mode are not supported. Qwen Research License: non-commercial use only.',
                     ),
                   if (_model == ModelChoice.qwen3 && _attachments.isNotEmpty)
                     const Text(
@@ -324,7 +356,7 @@ class _PromptScreenState extends State<PromptScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  if (_model == ModelChoice.omni) ...[
+                  if (_model != ModelChoice.qwen3) ...[
                     Wrap(
                       spacing: 8,
                       children: [
@@ -370,7 +402,7 @@ class _PromptScreenState extends State<PromptScreen> {
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Enable reasoning'),
                     value: _model == ModelChoice.qwen3 && _enableReasoning,
-                    onChanged: _busy || _model == ModelChoice.omni
+                    onChanged: _busy || _model != ModelChoice.qwen3
                         ? null
                         : (value) => setState(() {
                             _enableReasoning = value ?? false;
