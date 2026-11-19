@@ -16,7 +16,12 @@ class RecordingEngine extends LlamaEngine {
 
   final requests = <List<LlamaChatMessage>>[];
   final replies = <String>[];
+  final reasonings = <String>[];
+  final thinkingModes = <bool>[];
+  final parameters = <GenerationParams?>[];
   bool failNext = false;
+  bool failAfterReply = false;
+  String finishReason = 'stop';
 
   @override
   Future<LlamaChatTemplateResult> chatTemplate(
@@ -52,25 +57,36 @@ class RecordingEngine extends LlamaEngine {
     DateTime? templateNow,
   }) {
     requests.add(List.of(messages));
+    thinkingModes.add(enableThinking);
+    parameters.add(params);
     if (failNext) {
       failNext = false;
       return Stream.error(StateError('Generation failed'));
     }
-    return Stream.value(
-      LlamaCompletionChunk(
-        id: 'test',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'test',
-        choices: [
-          LlamaCompletionChunkChoice(
-            index: 0,
-            delta: LlamaCompletionChunkDelta(content: replies.removeAt(0)),
-            finishReason: 'stop',
+    final chunk = LlamaCompletionChunk(
+      id: 'test',
+      object: 'chat.completion.chunk',
+      created: 0,
+      model: 'test',
+      choices: [
+        LlamaCompletionChunkChoice(
+          index: 0,
+          delta: LlamaCompletionChunkDelta(
+            content: replies.removeAt(0),
+            thinking: reasonings.isEmpty ? null : reasonings.removeAt(0),
           ),
-        ],
-      ),
+          finishReason: finishReason,
+        ),
+      ],
     );
+    if (failAfterReply) {
+      failAfterReply = false;
+      return () async* {
+        yield chunk;
+        throw StateError('Generation failed after output');
+      }();
+    }
+    return Stream.value(chunk);
   }
 }
 
@@ -82,8 +98,14 @@ void main() {
         ..replies.addAll(['First answer', 'Second answer', 'Third answer']);
       final generator = LocalTextGenerator(engine: engine);
 
-      expect(await generator.generate('First prompt').join(), 'First answer');
-      expect(await generator.generate('Second prompt').join(), 'Second answer');
+      expect(
+        await generator.generate('First prompt').map((c) => c.text).join(),
+        'First answer',
+      );
+      expect(
+        await generator.generate('Second prompt').map((c) => c.text).join(),
+        'Second answer',
+      );
       expect(
         engine.requests[1].map((message) => (message.role, message.content)),
         [
@@ -93,7 +115,10 @@ void main() {
         ],
       );
 
-      expect(await generator.generate('Third prompt').join(), 'Third answer');
+      expect(
+        await generator.generate('Third prompt').map((c) => c.text).join(),
+        'Third answer',
+      );
       expect(
         engine.requests[2].map((message) => (message.role, message.content)),
         [
@@ -104,6 +129,87 @@ void main() {
       );
     },
   );
+
+  test('streams reasoning but excludes it from later model requests', () async {
+    final engine = RecordingEngine()
+      ..replies.addAll(['Answer', 'Follow-up answer'])
+      ..reasonings.add('Private prior thought');
+    final generator = LocalTextGenerator(engine: engine);
+    final chunks = await generator.generate('Question').toList();
+    expect(chunks.single.reasoning, 'Private prior thought');
+    expect(chunks.single.text, 'Answer');
+    expect(engine.thinkingModes.single, isTrue);
+    expect(engine.parameters.single!.thinkingBudget!.maxTokens, 256);
+
+    await generator.generate('Follow-up').drain<void>();
+    final previousAnswer = engine.requests.last[1];
+    expect(previousAnswer.content, 'Answer');
+    expect(previousAnswer.reasoning, isNull);
+  });
+
+  test('disabling reasoning removes the thinking budget', () async {
+    final engine = RecordingEngine()..replies.add('Answer');
+    final generator = LocalTextGenerator(engine: engine);
+    await generator.generate('Question', enableReasoning: false).drain<void>();
+    expect(engine.thinkingModes.single, isFalse);
+    expect(engine.parameters.single!.thinkingBudget, isNull);
+  });
+
+  test('reasoning without a final answer is not added to history', () async {
+    final engine = RecordingEngine()
+      ..replies.addAll(['', 'Next answer'])
+      ..reasonings.add('Unfinished thought');
+    final generator = LocalTextGenerator(engine: engine);
+    await generator.generate('Unfinished question').drain<void>();
+    await generator.generate('Next question').drain<void>();
+    expect(engine.requests.last.map((message) => message.content), [
+      'Next question',
+    ]);
+  });
+
+  test('failed partial answer retains text but not reasoning', () async {
+    final engine = RecordingEngine()
+      ..replies.addAll(['Partial answer', 'Next answer'])
+      ..reasonings.add('Partial reasoning')
+      ..failAfterReply = true;
+    final generator = LocalTextGenerator(engine: engine);
+    await expectLater(
+      generator.generate('Question').drain<void>(),
+      throwsStateError,
+    );
+    await generator.generate('Next question').drain<void>();
+    expect(engine.requests.last.map((message) => message.content), [
+      'Question',
+      'Partial answer',
+      'Next question',
+    ]);
+    expect(engine.requests.last[1].reasoning, isNull);
+  });
+
+  test('a truncated response is reported', () async {
+    final engine = RecordingEngine()
+      ..replies.add('Incomplete answer')
+      ..finishReason = 'length';
+    final generator = LocalTextGenerator(engine: engine);
+    final chunks = await generator.generate('Question').toList();
+    expect(chunks.single.text, 'Incomplete answer');
+    expect(chunks.single.truncated, isTrue);
+  });
+
+  test('cancelled reasoning-only output restores earlier history', () async {
+    final engine = RecordingEngine()
+      ..replies.addAll(['Earlier answer', '', 'Next answer'])
+      ..reasonings.addAll(['', 'Unfinished reasoning']);
+    final generator = LocalTextGenerator(engine: engine);
+    await generator.generate('Earlier question').drain<void>();
+    await generator.generate('Stopped question').take(1).toList();
+    await generator.generate('Next question').drain<void>();
+    expect(engine.requests.last.map((message) => message.content), [
+      'Earlier question',
+      'Earlier answer',
+      'Next question',
+    ]);
+  });
 
   test('a failed request does not leave a duplicate turn in history', () async {
     final engine = RecordingEngine()
@@ -122,4 +228,22 @@ void main() {
       'Retry prompt',
     ]);
   });
+
+  test(
+    'clearing history excludes previous turns from the next request',
+    () async {
+      final engine = RecordingEngine()
+        ..replies.addAll(['Answer', 'New answer']);
+      final generator = LocalTextGenerator(engine: engine);
+      await generator.generate('Old prompt').drain<void>();
+
+      generator.clearHistory();
+      await generator.generate('New prompt').drain<void>();
+
+      expect(
+        engine.requests.last.map((message) => (message.role, message.content)),
+        [(LlamaChatRole.user, 'New prompt')],
+      );
+    },
+  );
 }

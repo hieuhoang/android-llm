@@ -17,6 +17,13 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "llm_text_app/build_info")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "buildTimestamp" -> result.success(BuildConfig.BUILD_TIMESTAMP)
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "llm_text_app/model_download")
             .setMethodCallHandler { call, result ->
                 try {

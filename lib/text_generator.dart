@@ -3,9 +3,25 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:llamadart/llamadart.dart';
 
+class GenerationChunk {
+  const GenerationChunk({
+    this.reasoning = '',
+    this.text = '',
+    this.truncated = false,
+  });
+
+  final String reasoning;
+  final String text;
+  final bool truncated;
+}
+
 abstract interface class TextGenerator {
   Future<void> load(void Function(double?) onProgress);
-  Stream<String> generate(String prompt);
+  Stream<GenerationChunk> generate(
+    String prompt, {
+    bool enableReasoning = true,
+  });
+  void clearHistory();
   Future<void> cancel();
   Future<void> dispose();
 }
@@ -79,21 +95,58 @@ class LocalTextGenerator implements TextGenerator {
   }
 
   @override
-  Stream<String> generate(String prompt) async* {
-    await for (final chunk in _session.create(
-      [LlamaTextContent(prompt)],
-      enableThinking: false,
-      params: const GenerationParams(
-        maxTokens: 256,
-        temp: 0.7,
-        topP: 0.8,
-        topK: 20,
-        presencePenalty: 1.5,
-      ),
-    )) {
-      if (chunk.text.isNotEmpty) yield chunk.text;
+  Stream<GenerationChunk> generate(
+    String prompt, {
+    bool enableReasoning = true,
+  }) async* {
+    final previousHistory = _session.history;
+    final answer = StringBuffer();
+    try {
+      await for (final chunk in _session.create(
+        [LlamaTextContent(prompt)],
+        enableThinking: enableReasoning,
+        params: GenerationParams(
+          maxTokens: 512,
+          thinkingBudget: enableReasoning
+              ? const ThinkingBudget(maxTokens: 256)
+              : null,
+          temp: enableReasoning ? 0.6 : 0.7,
+          topP: enableReasoning ? 0.95 : 0.8,
+          topK: 20,
+          presencePenalty: 1.5,
+        ),
+      )) {
+        answer.write(chunk.text);
+        if (chunk.text.isNotEmpty ||
+            chunk.thinking.isNotEmpty ||
+            chunk.finishReason == LlamaFinishReason.length) {
+          yield GenerationChunk(
+            reasoning: chunk.thinking,
+            text: chunk.text,
+            truncated: chunk.finishReason == LlamaFinishReason.length,
+          );
+        }
+      }
+    } finally {
+      final history = answer.toString().trim().isNotEmpty
+          ? _session.history
+          : previousHistory;
+      _session.reset();
+      for (final message in history) {
+        _session.addMessage(
+          message.role == LlamaChatRole.assistant
+              ? LlamaChatMessage.fromText(
+                  role: LlamaChatRole.assistant,
+                  text: message.content,
+                )
+              : message,
+        );
+      }
     }
   }
+
+  @override
+  void clearHistory() => _session.reset();
 
   @override
   Future<void> cancel() async {
