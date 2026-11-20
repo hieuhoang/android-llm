@@ -31,6 +31,8 @@ class FakeGenerator implements TextGenerator {
   bool? reasoningEnabled;
   ModelChoice? model;
   bool? useGpu;
+  bool? loadProjector;
+  bool? generationProjector;
   List<PromptAttachment>? attachments;
   bool cancelled = false;
   bool historyCleared = false;
@@ -40,9 +42,11 @@ class FakeGenerator implements TextGenerator {
     void Function(double?) onProgress, {
     ModelChoice model = ModelChoice.qwen3,
     bool useGpu = false,
+    bool loadProjector = true,
   }) {
     this.model = model;
     this.useGpu = useGpu;
+    this.loadProjector = loadProjector;
     progress = onProgress;
     return loading.future;
   }
@@ -53,11 +57,13 @@ class FakeGenerator implements TextGenerator {
     bool enableReasoning = true,
     ModelChoice model = ModelChoice.qwen3,
     List<PromptAttachment> attachments = const [],
+    bool loadProjector = true,
   }) {
     this.prompt = prompt;
     reasoningEnabled = enableReasoning;
     this.model = model;
     this.attachments = attachments;
+    generationProjector = loadProjector;
     output = StreamController<GenerationChunk>();
     return output!.stream;
   }
@@ -132,6 +138,67 @@ void main() {
     await tester.tap(find.text('Generate'));
     await tester.pump();
     expect(generator.useGpu, isFalse);
+    await generator.output!.close();
+    await tester.pump();
+  });
+
+  testWidgets('projector toggle controls media and model loading', (
+    tester,
+  ) async {
+    final generator = FakeGenerator()..loading.complete();
+    await tester.pumpWidget(
+      LlmTextApp(generator: generator, media: FakeMediaInput()),
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<ModelChoice>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Qwen2.5 Omni 3B Q4_K_M').last);
+    await tester.pumpAndSettle();
+    final projector = find.byKey(const Key('projector-checkbox'));
+    expect(tester.widget<CheckboxListTile>(projector).value, isTrue);
+    await tester.ensureVisible(find.text('Add image'));
+    await tester.tap(find.text('Add image'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(projector);
+    await tester.tap(projector);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Remove attachments or enable'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Add image'),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Generate'))
+          .onPressed,
+      isNull,
+    );
+    await tester.ensureVisible(find.byTooltip('Remove attachment'));
+    await tester.tap(find.byTooltip('Remove attachment'));
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Hello');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.loadProjector, isFalse);
+    expect(generator.generationProjector, isFalse);
+    expect(tester.widget<CheckboxListTile>(projector).onChanged, isNull);
+    generator.output!.add(const GenerationChunk(text: 'Hello back'));
+    await generator.output!.close();
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(projector);
+    await tester.tap(projector);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Again');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.loadProjector, isTrue);
+    expect(generator.generationProjector, isTrue);
     await generator.output!.close();
     await tester.pump();
   });
@@ -375,10 +442,13 @@ void main() {
           .onChanged,
       isNull,
     );
+    await tester.ensureVisible(find.text('Add image'));
     await tester.tap(find.text('Add image'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add audio file'));
     await tester.tap(find.text('Add audio file'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Record audio'));
     await tester.tap(find.text('Record audio'));
     await tester.pumpAndSettle();
     expect(find.text('Stop recording'), findsOneWidget);
@@ -418,6 +488,7 @@ void main() {
             .onChanged,
         isNull,
       );
+      await tester.ensureVisible(find.text('Add image'));
       await tester.tap(find.text('Add image'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Generate'));

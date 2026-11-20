@@ -273,6 +273,51 @@ void main() {
     );
   });
 
+  test(
+    'Omni without a projector uses media placeholders and rejects attachments',
+    () async {
+      final engine = RecordingEngine()
+        ..tokensPerMessage = 100
+        ..replies.addAll(['Seen', 'Text reply', 'Another reply']);
+      final generator = LocalTextGenerator(engine: engine);
+      const image = PromptAttachment(
+        kind: AttachmentKind.image,
+        path: '/test/image.jpg',
+        name: 'image.jpg',
+      );
+      await generator
+          .generate('Describe', model: ModelChoice.omniQ4, attachments: [image])
+          .drain<void>();
+      await expectLater(
+        generator
+            .generate(
+              'Describe',
+              model: ModelChoice.omniQ4,
+              loadProjector: false,
+              attachments: [image],
+            )
+            .drain<void>(),
+        throwsArgumentError,
+      );
+      await generator
+          .generate(
+            'Follow up',
+            model: ModelChoice.omniQ4,
+            loadProjector: false,
+          )
+          .drain<void>();
+      expect(engine.requests.last.first.content, 'Describe\n[Image attached]');
+      expect(
+        engine.requests.last.first.parts.every(
+          (part) => part is LlamaTextContent,
+        ),
+        isTrue,
+      );
+      await generator.generate('Next', model: ModelChoice.omniQ4).drain<void>();
+      expect(engine.requests.last.first.content, 'Describe\n[Image attached]');
+    },
+  );
+
   test('reasoning without a final answer is not added to history', () async {
     final engine = RecordingEngine()
       ..replies.addAll(['', 'Next answer'])

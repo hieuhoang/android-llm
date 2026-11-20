@@ -36,12 +36,14 @@ abstract interface class TextGenerator {
     void Function(double?) onProgress, {
     ModelChoice model = ModelChoice.qwen3,
     bool useGpu = false,
+    bool loadProjector = true,
   });
   Stream<GenerationChunk> generate(
     String prompt, {
     bool enableReasoning = true,
     ModelChoice model = ModelChoice.qwen3,
     List<PromptAttachment> attachments = const [],
+    bool loadProjector = true,
   });
   void clearHistory();
   Future<void> cancel();
@@ -63,6 +65,7 @@ class LocalTextGenerator implements TextGenerator {
   ModelDownloadCancelToken? _downloadCancel;
   ModelChoice? _loadedModel;
   bool? _loadedWithGpu;
+  bool? _loadedWithProjector;
   bool _cancelled = false;
   String? _downloading;
   bool _verifying = false;
@@ -72,8 +75,14 @@ class LocalTextGenerator implements TextGenerator {
     void Function(double?) onProgress, {
     ModelChoice model = ModelChoice.qwen3,
     bool useGpu = false,
+    bool loadProjector = true,
   }) async {
-    if (_loadedModel == model && _loadedWithGpu == useGpu) return;
+    final withProjector = model != ModelChoice.qwen3 && loadProjector;
+    if (_loadedModel == model &&
+        _loadedWithGpu == useGpu &&
+        _loadedWithProjector == withProjector) {
+      return;
+    }
     if (!Platform.isAndroid) {
       throw UnsupportedError(
         'Public model storage is currently supported on Android only.',
@@ -87,6 +96,7 @@ class LocalTextGenerator implements TextGenerator {
         await _engine.unloadModel();
         _loadedModel = null;
         _loadedWithGpu = null;
+        _loadedWithProjector = null;
       }
       await _downloads.invokeMethod<void>('close');
       final modelFile = switch (model) {
@@ -113,7 +123,7 @@ class LocalTextGenerator implements TextGenerator {
       };
       final files = [
         modelFile,
-        if (model != ModelChoice.qwen3)
+        if (withProjector)
           (
             'omni_projector',
             '4e6c816cd33f7298d07cb780c136a396631e50e62f6501660271f8c6e302e565',
@@ -194,6 +204,7 @@ class LocalTextGenerator implements TextGenerator {
       );
       _loadedModel = model;
       _loadedWithGpu = useGpu;
+      _loadedWithProjector = withProjector;
     } finally {
       _downloading = null;
       _downloadCancel = null;
@@ -206,12 +217,14 @@ class LocalTextGenerator implements TextGenerator {
     bool enableReasoning = true,
     ModelChoice model = ModelChoice.qwen3,
     List<PromptAttachment> attachments = const [],
+    bool loadProjector = true,
   }) async* {
-    if (model == ModelChoice.qwen3 && attachments.isNotEmpty) {
-      throw ArgumentError('The selected model does not support attachments.');
+    final withProjector = model != ModelChoice.qwen3 && loadProjector;
+    if (!withProjector && attachments.isNotEmpty) {
+      throw ArgumentError('Image and audio input requires the Omni projector.');
     }
     _session.maxContextTokens = _contextSizeFor(model);
-    if (model == ModelChoice.qwen3) {
+    if (!withProjector) {
       final history = _session.history;
       _session.reset();
       for (final message in history) {

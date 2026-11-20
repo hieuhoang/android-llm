@@ -16,7 +16,13 @@ but excluded from later requests, following Qwen's recommendation. A stopped
 response may be retained as a partial turn; a turn with no final answer is not
 included in later requests. Switching models retains conversation history; when
 using the text-only model, earlier images and audio become labeled text
-placeholders. **Clear conversation** clears both the display and
+placeholders. Omni's **Load image/audio projector** checkbox is enabled by
+default; turn it off for text-only requests to avoid downloading or loading the
+projector. The change applies on the next generation and reloads the model.
+Pending attachments must be removed or the projector re-enabled before sending.
+Previous media becomes text placeholders when generating with the projector off;
+re-enabling it does not restore that media to the model context.
+**Clear conversation** clears both the display and
 model context without unloading the model. The prompt field is cleared after
 each attempt.
 
@@ -27,7 +33,7 @@ On Android 10 or later, the app downloads models from Hugging Face to
 the public Downloads folder using Android's Download Manager. It verifies each
 download's SHA-256 checksum once, then reuses that result unless the download,
 expected checksum, or file metadata changes. Files are read directly; the app
-does not keep a private copy. Qwen3 is 639 MB; Omni's model and shared projector total about 2.92 GB
+does not keep a private copy. Qwen3 is 639 MB; Omni's model and optional shared projector total about 2.92 GB
 (Q2), 3.64 GB (Q4), or 5.15 GB (Q8), and can exceed the tablet's available
 memory. Lower quantization saves memory but can reduce quality; Q4 and Q8 need
 substantially more memory than Q2. Downloads are retained when switching models,

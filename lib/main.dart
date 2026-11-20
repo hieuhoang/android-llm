@@ -65,6 +65,7 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _recording = false;
   bool _enableReasoning = true;
   bool _useGpu = false;
+  bool _loadProjector = true;
   bool _cancelled = false;
   double? _progress;
   String? _stopError;
@@ -102,7 +103,8 @@ class _PromptScreenState extends State<PromptScreen> {
         _mediaBusy ||
         _recording ||
         (prompt.isEmpty && _attachments.isEmpty) ||
-        (_model == ModelChoice.qwen3 && _attachments.isNotEmpty)) {
+        ((_model == ModelChoice.qwen3 || !_loadProjector) &&
+            _attachments.isNotEmpty)) {
       return;
     }
     final turn = _ConversationTurn(prompt, List.of(_attachments));
@@ -134,6 +136,7 @@ class _PromptScreenState extends State<PromptScreen> {
         },
         model: _model,
         useGpu: _useGpu,
+        loadProjector: _loadProjector,
       );
       if (!mounted || _cancelled) return;
       setState(() {
@@ -145,6 +148,7 @@ class _PromptScreenState extends State<PromptScreen> {
         enableReasoning: _enableReasoning,
         model: _model,
         attachments: turn.attachments,
+        loadProjector: _loadProjector,
       )) {
         if (!mounted) break;
         setState(() {
@@ -329,16 +333,38 @@ class _PromptScreenState extends State<PromptScreen> {
                   ),
                   if (_model != ModelChoice.qwen3)
                     Text(
-                      'Omni model and shared projector total ${switch (_model) {
-                        ModelChoice.omniQ2 => '2.92',
-                        ModelChoice.omniQ4 => '3.64',
-                        ModelChoice.omniQ8 => '5.15',
+                      '${_loadProjector ? 'Omni model and shared projector total' : 'Omni model download is'} ${switch (_model) {
+                        ModelChoice.omniQ2 => _loadProjector ? '2.92' : '1.38',
+                        ModelChoice.omniQ4 => _loadProjector ? '3.64' : '2.10',
+                        ModelChoice.omniQ8 => _loadProjector ? '5.15' : '3.62',
                         ModelChoice.qwen3 => throw StateError('Not an Omni model'),
                       }} GB and may exceed available memory. Lower quantization can affect quality. Speech output and reasoning mode are not supported. Qwen Research License: non-commercial use only.',
+                    ),
+                  if (_model != ModelChoice.qwen3)
+                    CheckboxListTile(
+                      key: const Key('projector-checkbox'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Load image/audio projector'),
+                      subtitle: const Text(
+                        'Turn off for text-only use and lower memory. Applies on the next generation; previous media becomes text placeholders.',
+                      ),
+                      value: _loadProjector,
+                      onChanged: _busy || _mediaBusy || _recording
+                          ? null
+                          : (value) => setState(() {
+                              _loadProjector = value ?? false;
+                            }),
+                      controlAffinity: ListTileControlAffinity.leading,
                     ),
                   if (_model == ModelChoice.qwen3 && _attachments.isNotEmpty)
                     const Text(
                       'Remove attachments or select Omni to send them. Previous media becomes text placeholders.',
+                    ),
+                  if (_model != ModelChoice.qwen3 &&
+                      !_loadProjector &&
+                      _attachments.isNotEmpty)
+                    const Text(
+                      'Remove attachments or enable the image/audio projector to send them.',
                     ),
                   const SizedBox(height: 12),
                   Text(
@@ -366,19 +392,27 @@ class _PromptScreenState extends State<PromptScreen> {
                       spacing: 8,
                       children: [
                         OutlinedButton(
-                          onPressed: _busy || _mediaBusy || _recording
+                          onPressed:
+                              _busy ||
+                                  _mediaBusy ||
+                                  _recording ||
+                                  !_loadProjector
                               ? null
                               : () => _pick(AttachmentKind.image),
                           child: const Text('Add image'),
                         ),
                         OutlinedButton(
-                          onPressed: _busy || _mediaBusy || _recording
+                          onPressed:
+                              _busy ||
+                                  _mediaBusy ||
+                                  _recording ||
+                                  !_loadProjector
                               ? null
                               : () => _pick(AttachmentKind.audio),
                           child: const Text('Add audio file'),
                         ),
                         OutlinedButton(
-                          onPressed: _busy || _mediaBusy
+                          onPressed: _busy || _mediaBusy || !_loadProjector
                               ? null
                               : _toggleRecording,
                           child: Text(
@@ -434,7 +468,7 @@ class _PromptScreenState extends State<PromptScreen> {
                             _recording ||
                             (_promptController.text.trim().isEmpty &&
                                 _attachments.isEmpty) ||
-                            (_model == ModelChoice.qwen3 &&
+                            ((_model == ModelChoice.qwen3 || !_loadProjector) &&
                                 _attachments.isNotEmpty)
                         ? null
                         : _generate,
