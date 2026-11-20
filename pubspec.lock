@@ -291,10 +291,9 @@ packages:
   llamadart:
     dependency: "direct main"
     description:
-      name: llamadart
-      sha256: fc903411dd0a6a6f48f1f9eca467ef32253621087bd19f741e2b9e9141c0a050
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/llamadart"
+      relative: true
+    source: path
     version: "0.20.1"
   llamadart_llama_cpp_flutter:
     dependency: "direct main"

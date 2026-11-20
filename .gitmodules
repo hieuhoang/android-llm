@@ -1,0 +1,3 @@
+[submodule "third_party/llamadart"]
+	path = third_party/llamadart
+	url = https://github.com/leehack/llamadart.git

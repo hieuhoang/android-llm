@@ -66,6 +66,8 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _enableReasoning = true;
   bool _useGpu = false;
   bool _loadProjector = true;
+  bool _stagedMultimodal = false;
+  bool _downsizeImages = false;
   bool _cancelled = false;
   double? _progress;
   String? _stopError;
@@ -137,6 +139,7 @@ class _PromptScreenState extends State<PromptScreen> {
         model: _model,
         useGpu: _useGpu,
         loadProjector: _loadProjector,
+        stagedMultimodal: _stagedMultimodal,
       );
       if (!mounted || _cancelled) return;
       setState(() {
@@ -211,7 +214,10 @@ class _PromptScreenState extends State<PromptScreen> {
   Future<void> _pick(AttachmentKind kind) async {
     setState(() => _mediaBusy = true);
     try {
-      final attachment = await _media.pick(kind);
+      final attachment = await _media.pick(
+        kind,
+        downsizeImages: kind == AttachmentKind.image && _downsizeImages,
+      );
       if (mounted && attachment != null) {
         setState(() => _attachments.add(attachment));
       }
@@ -353,6 +359,42 @@ class _PromptScreenState extends State<PromptScreen> {
                           ? null
                           : (value) => setState(() {
                               _loadProjector = value ?? false;
+                            }),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                  if (_model != ModelChoice.qwen3)
+                    CheckboxListTile(
+                      key: const Key('staged-multimodal-checkbox'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Experimental low-memory image processing',
+                      ),
+                      subtitle: const Text(
+                        'Encode images on CPU before loading the language model. Reloads the model for image requests; turn off for audio.',
+                      ),
+                      value: _stagedMultimodal,
+                      onChanged:
+                          _busy || _mediaBusy || _recording || !_loadProjector
+                          ? null
+                          : (value) => setState(() {
+                              _stagedMultimodal = value ?? false;
+                            }),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                  if (_model != ModelChoice.qwen3)
+                    CheckboxListTile(
+                      key: const Key('downsize-images-checkbox'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Downsize large images'),
+                      subtitle: const Text(
+                        'Limit the longest edge to 1024 pixels. Applies to newly selected images.',
+                      ),
+                      value: _downsizeImages,
+                      onChanged:
+                          _busy || _mediaBusy || _recording || !_loadProjector
+                          ? null
+                          : (value) => setState(() {
+                              _downsizeImages = value ?? false;
                             }),
                       controlAffinity: ListTileControlAffinity.leading,
                     ),

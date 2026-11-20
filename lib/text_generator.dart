@@ -37,6 +37,7 @@ abstract interface class TextGenerator {
     ModelChoice model = ModelChoice.qwen3,
     bool useGpu = false,
     bool loadProjector = true,
+    bool stagedMultimodal = false,
   });
   Stream<GenerationChunk> generate(
     String prompt, {
@@ -55,7 +56,7 @@ class LocalTextGenerator implements TextGenerator {
     : _engine = engine ?? LlamaEngine(LlamaBackend());
 
   static int _contextSizeFor(ModelChoice model) =>
-      model == ModelChoice.qwen3 ? 2048 : 4096;
+      model == ModelChoice.qwen3 ? 2048 : 8192;
   final LlamaEngine _engine;
   late final _session = ChatSession(
     _engine,
@@ -66,6 +67,7 @@ class LocalTextGenerator implements TextGenerator {
   ModelChoice? _loadedModel;
   bool? _loadedWithGpu;
   bool? _loadedWithProjector;
+  bool? _loadedWithStaging;
   bool _cancelled = false;
   String? _downloading;
   bool _verifying = false;
@@ -76,11 +78,14 @@ class LocalTextGenerator implements TextGenerator {
     ModelChoice model = ModelChoice.qwen3,
     bool useGpu = false,
     bool loadProjector = true,
+    bool stagedMultimodal = false,
   }) async {
     final withProjector = model != ModelChoice.qwen3 && loadProjector;
+    final withStaging = withProjector && stagedMultimodal;
     if (_loadedModel == model &&
         _loadedWithGpu == useGpu &&
-        _loadedWithProjector == withProjector) {
+        _loadedWithProjector == withProjector &&
+        _loadedWithStaging == withStaging) {
       return;
     }
     if (!Platform.isAndroid) {
@@ -97,6 +102,7 @@ class LocalTextGenerator implements TextGenerator {
         _loadedModel = null;
         _loadedWithGpu = null;
         _loadedWithProjector = null;
+        _loadedWithStaging = null;
       }
       await _downloads.invokeMethod<void>('close');
       final modelFile = switch (model) {
@@ -199,12 +205,14 @@ class LocalTextGenerator implements TextGenerator {
           contextSize: _contextSizeFor(model),
           device: useGpu ? ComputeDevice.gpu : ComputeDevice.cpu,
           gpuLayers: useGpu ? ModelParams.maxGpuLayers : 0,
+          stagedMultimodal: withStaging,
         ),
         download: ModelLoadOptions(cancelToken: cancel),
       );
       _loadedModel = model;
       _loadedWithGpu = useGpu;
       _loadedWithProjector = withProjector;
+      _loadedWithStaging = withStaging;
     } finally {
       _downloading = null;
       _downloadCancel = null;
@@ -279,6 +287,11 @@ class LocalTextGenerator implements TextGenerator {
           );
         }
       }
+    } catch (_) {
+      if (_loadedWithStaging == true) {
+        _loadedModel = null;
+      }
+      rethrow;
     } finally {
       final history = answer.toString().trim().isNotEmpty
           ? _session.history

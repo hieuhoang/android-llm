@@ -100,15 +100,15 @@ void main() {
     ModelChoice.omniQ8,
   ]) {
     test(
-      '$model retains more history and switches back to Qwen3 limits',
+      '$model uses the 8192-token budget and switches back to Qwen3 limits',
       () async {
         final engine = RecordingEngine()
-          ..tokensPerMessage = 600
-          ..replies.addAll(['A1', 'A2', 'A3', 'A4']);
+          ..replies.addAll(['A1', 'A2', 'A3', 'A4', 'A5']);
         final generator = LocalTextGenerator(engine: engine);
 
         await generator.generate('P1', model: model).drain<void>();
         await generator.generate('P2', model: model).drain<void>();
+        engine.tokensPerMessage = 1536;
         await generator.generate('P3', model: model).drain<void>();
         expect(engine.requests.last.map((message) => message.content), [
           'P1',
@@ -118,8 +118,19 @@ void main() {
           'P3',
         ]);
 
-        await generator.generate('P4', model: ModelChoice.qwen3).drain<void>();
-        expect(engine.requests.last.map((message) => message.content), ['P4']);
+        engine.tokensPerMessage = 1098;
+        await generator.generate('P4', model: model).drain<void>();
+        expect(engine.requests.last.map((message) => message.content), [
+          'P2',
+          'A2',
+          'P3',
+          'A3',
+          'P4',
+        ]);
+
+        engine.tokensPerMessage = 600;
+        await generator.generate('P5', model: ModelChoice.qwen3).drain<void>();
+        expect(engine.requests.last.map((message) => message.content), ['P5']);
       },
     );
   }

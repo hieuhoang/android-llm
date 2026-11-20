@@ -8,9 +8,20 @@ import 'package:llm_text_app/media_input.dart';
 import 'package:llm_text_app/text_generator.dart';
 
 class FakeMediaInput extends MediaInput {
+  final resizeChoices = <(AttachmentKind, bool)>[];
+
   @override
-  Future<PromptAttachment?> pick(AttachmentKind kind) async =>
-      PromptAttachment(kind: kind, path: '/test/${kind.name}', name: kind.name);
+  Future<PromptAttachment?> pick(
+    AttachmentKind kind, {
+    bool downsizeImages = false,
+  }) async {
+    resizeChoices.add((kind, downsizeImages));
+    return PromptAttachment(
+      kind: kind,
+      path: '/test/${kind.name}',
+      name: kind.name,
+    );
+  }
 
   @override
   Future<void> startRecording() async {}
@@ -32,6 +43,7 @@ class FakeGenerator implements TextGenerator {
   ModelChoice? model;
   bool? useGpu;
   bool? loadProjector;
+  bool? stagedMultimodal;
   bool? generationProjector;
   List<PromptAttachment>? attachments;
   bool cancelled = false;
@@ -43,10 +55,12 @@ class FakeGenerator implements TextGenerator {
     ModelChoice model = ModelChoice.qwen3,
     bool useGpu = false,
     bool loadProjector = true,
+    bool stagedMultimodal = false,
   }) {
     this.model = model;
     this.useGpu = useGpu;
     this.loadProjector = loadProjector;
+    this.stagedMultimodal = stagedMultimodal;
     progress = onProgress;
     return loading.future;
   }
@@ -154,13 +168,16 @@ void main() {
     await tester.tap(find.text('Qwen2.5 Omni 3B Q4_K_M').last);
     await tester.pumpAndSettle();
     final projector = find.byKey(const Key('projector-checkbox'));
+    final staged = find.byKey(const Key('staged-multimodal-checkbox'));
     expect(tester.widget<CheckboxListTile>(projector).value, isTrue);
+    expect(tester.widget<CheckboxListTile>(staged).value, isFalse);
     await tester.ensureVisible(find.text('Add image'));
     await tester.tap(find.text('Add image'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(projector);
     await tester.tap(projector);
     await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(staged).onChanged, isNull);
     expect(find.textContaining('Remove attachments or enable'), findsOneWidget);
     expect(
       tester
@@ -192,12 +209,16 @@ void main() {
     await tester.ensureVisible(projector);
     await tester.tap(projector);
     await tester.pumpAndSettle();
+    await tester.ensureVisible(staged);
+    await tester.tap(staged);
+    await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('prompt-input')), 'Again');
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Generate'));
     await tester.tap(find.text('Generate'));
     await tester.pump();
     expect(generator.loadProjector, isTrue);
+    expect(generator.stagedMultimodal, isTrue);
     expect(generator.generationProjector, isTrue);
     await generator.output!.close();
     await tester.pump();
@@ -465,6 +486,37 @@ void main() {
     ]);
     await generator.output!.close();
     await tester.pump();
+  });
+
+  testWidgets('image downsizing applies only to newly selected images', (
+    tester,
+  ) async {
+    final media = FakeMediaInput();
+    final generator = FakeGenerator()..loading.complete();
+    await tester.pumpWidget(LlmTextApp(generator: generator, media: media));
+    await tester.tap(find.byType(DropdownButtonFormField<ModelChoice>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Qwen2.5 Omni 3B Q2_K').last);
+    await tester.pumpAndSettle();
+
+    final checkbox = find.byKey(const Key('downsize-images-checkbox'));
+    expect(tester.widget<CheckboxListTile>(checkbox).value, isFalse);
+    await tester.ensureVisible(find.text('Add image'));
+    await tester.tap(find.text('Add image'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(checkbox);
+    await tester.tap(checkbox);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add image'));
+    await tester.tap(find.text('Add image'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add audio file'));
+    await tester.pumpAndSettle();
+    expect(media.resizeChoices, [
+      (AttachmentKind.image, false),
+      (AttachmentKind.image, true),
+      (AttachmentKind.audio, false),
+    ]);
   });
 
   for (final (label, model) in [
