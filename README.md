@@ -78,9 +78,10 @@ after cloning:
 git submodule update --init --recursive
 ```
 
-The submodule currently points to the upstream repository at version 0.20.1.
-To publish changes to a separate fork, update its URL in `.gitmodules` and
-push the submodule commit to that fork before sharing the parent repository.
+The submodule points to a private llamadart fork based on version 0.20.1.
+Cloning it requires SSH access to `hieuhoang/llamadart`. In an existing clone
+that used the upstream URL, run `git submodule sync --recursive` before the
+update command above.
 
 ```sh
 flutter pub get
