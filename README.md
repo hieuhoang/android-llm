@@ -104,3 +104,7 @@ implemented only for Android. Run the Linux desktop app with
 ```sh
 flutter test
 ```
+Linux
+cd /home/hieu/workspace/github/android-llm.copy
+flutter create --platforms=linux --project-name=llm_text_app .
+flutter build linux
