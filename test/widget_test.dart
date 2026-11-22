@@ -111,6 +111,17 @@ void main() {
         .setMockMethodCallHandler(buildChannel, null);
   });
 
+  testWidgets('prompt input grows to at most two lines', (tester) async {
+    final generator = FakeGenerator()..loading.complete();
+    await tester.pumpWidget(LlmTextApp(generator: generator));
+
+    final promptInput = tester.widget<TextField>(
+      find.byKey(const Key('prompt-input')),
+    );
+    expect(promptInput.minLines, 1);
+    expect(promptInput.maxLines, 2);
+  });
+
   testWidgets('GPU choice is applied on the next generation', (tester) async {
     final generator = FakeGenerator()..loading.complete();
     await tester.pumpWidget(LlmTextApp(generator: generator));

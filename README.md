@@ -60,6 +60,10 @@ up to 512 output tokens, and, when enabled, a
 256-token thinking budget. The larger Omni context uses more memory. Longer
 answers may be cut off; thinking mode can be slower.
 
+On Linux desktop, models are stored in the application's support directory.
+Incomplete downloads resume on the next attempt, and each model's SHA-256
+checksum is verified before loading.
+
 Omni accepts selected JPG, PNG, GIF or BMP images, WAV, MP3 or FLAC audio files,
 and microphone recordings. Selected media and recordings are copied to the
 app's temporary storage for the current conversation and deleted when the app
@@ -88,8 +92,12 @@ flutter pub get
 flutter run
 ```
 
-Android and iOS are scaffolded; public model storage is currently implemented
-only for Android. iOS requires macOS and iOS 16.4 or newer.
+flutter pub get
+flutter build apk --debug
+
+Android, iOS and Linux desktop are scaffolded. Public model storage is currently
+implemented only for Android. Run the Linux desktop app with
+`flutter run -d linux`. iOS requires macOS and iOS 16.4 or newer.
 
 ## Test
 

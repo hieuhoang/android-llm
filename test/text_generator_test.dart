@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamadart/llamadart.dart';
+import 'package:llm_text_app/model_storage.dart';
 import 'package:llm_text_app/text_generator.dart';
 
 class IdleBackend implements LlamaBackend {
@@ -19,10 +22,21 @@ class RecordingEngine extends LlamaEngine {
   final reasonings = <String>[];
   final thinkingModes = <bool>[];
   final parameters = <GenerationParams?>[];
+  LlamaModel? loadedModel;
   bool failNext = false;
   bool failAfterReply = false;
   int tokensPerMessage = 400;
   String finishReason = 'stop';
+
+  @override
+  Future<void> setModel(
+    LlamaModel model, {
+    ModelParams params = const ModelParams(),
+    ModelLoadOptions download = ModelLoadOptions.defaults,
+    ModelDownloadProgressCallback? onProgress,
+  }) async {
+    loadedModel = model;
+  }
 
   @override
   Future<LlamaChatTemplateResult> chatTemplate(
@@ -93,7 +107,37 @@ class RecordingEngine extends LlamaEngine {
   }
 }
 
+class FakeModelStore implements AppModelFileStore {
+  final artifacts = <ModelArtifact>[];
+
+  @override
+  Future<String> obtain(
+    ModelArtifact artifact, {
+    required int completedBytes,
+    required int totalBytes,
+    required void Function(double?) onProgress,
+    required ModelDownloadCancelToken cancelToken,
+  }) async {
+    artifacts.add(artifact);
+    return '/models/${artifact.filename}';
+  }
+
+  @override
+  void cancel() {}
+}
+
 void main() {
+  test('loads Linux models from the local model store', () async {
+    final store = FakeModelStore();
+    final engine = RecordingEngine();
+    final generator = LocalTextGenerator(engine: engine, modelStore: store);
+
+    await generator.load((_) {});
+
+    expect(store.artifacts.single.key, 'qwen3');
+    expect(engine.loadedModel, isNotNull);
+  }, skip: !Platform.isLinux);
+
   for (final model in [
     ModelChoice.omniQ2,
     ModelChoice.omniQ4,

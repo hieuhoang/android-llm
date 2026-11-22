@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:llamadart/llamadart.dart';
 
+import 'model_storage.dart';
+
 enum ModelChoice { qwen3, omniQ2, omniQ4, omniQ8 }
 
 enum AttachmentKind { image, audio }
@@ -52,8 +54,9 @@ abstract interface class TextGenerator {
 }
 
 class LocalTextGenerator implements TextGenerator {
-  LocalTextGenerator({LlamaEngine? engine})
-    : _engine = engine ?? LlamaEngine(LlamaBackend());
+  LocalTextGenerator({LlamaEngine? engine, AppModelFileStore? modelStore})
+    : _engine = engine ?? LlamaEngine(LlamaBackend()),
+      _modelStore = modelStore ?? LinuxModelStore();
 
   static int _contextSizeFor(ModelChoice model) =>
       model == ModelChoice.qwen3 ? 2048 : 8192;
@@ -64,6 +67,7 @@ class LocalTextGenerator implements TextGenerator {
   );
   static const _downloads = MethodChannel('llm_text_app/model_download');
   ModelDownloadCancelToken? _downloadCancel;
+  final AppModelFileStore _modelStore;
   ModelChoice? _loadedModel;
   bool? _loadedWithGpu;
   bool? _loadedWithProjector;
@@ -88,9 +92,9 @@ class LocalTextGenerator implements TextGenerator {
         _loadedWithStaging == withStaging) {
       return;
     }
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isLinux) {
       throw UnsupportedError(
-        'Public model storage is currently supported on Android only.',
+        'Model downloads are currently supported on Android and Linux.',
       );
     }
     _cancelled = false;
@@ -104,94 +108,127 @@ class LocalTextGenerator implements TextGenerator {
         _loadedWithProjector = null;
         _loadedWithStaging = null;
       }
-      await _downloads.invokeMethod<void>('close');
+      if (Platform.isAndroid) await _downloads.invokeMethod<void>('close');
       final modelFile = switch (model) {
-        ModelChoice.qwen3 => (
-          'qwen3',
-          '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031',
-          639446688,
+        ModelChoice.qwen3 => const ModelArtifact(
+          key: 'qwen3',
+          repository: 'Qwen/Qwen3-0.6B-GGUF',
+          revision: '23749fefcc72300e3a2ad315e1317431b06b590a',
+          filename: 'Qwen3-0.6B-Q8_0.gguf',
+          sha256: '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031',
+          size: 639446688,
         ),
-        ModelChoice.omniQ2 => (
-          'omni_q2',
-          'c51e4b42d85f0a0c2d7699b1891521b8d050d89911b939a258c31e9a7e50c131',
-          1376856096,
+        ModelChoice.omniQ2 => const ModelArtifact(
+          key: 'omni_q2',
+          repository: 'unsloth/Qwen2.5-Omni-3B-GGUF',
+          revision: '9eb5b23b5222c0ec3b81ce932e35a7f21a9b75d3',
+          filename: 'Qwen2.5-Omni-3B-Q2_K.gguf',
+          sha256: 'c51e4b42d85f0a0c2d7699b1891521b8d050d89911b939a258c31e9a7e50c131',
+          size: 1376856096,
         ),
-        ModelChoice.omniQ4 => (
-          'omni',
-          '4b0bd358c1e9ec55dd3055ef6d71c958c821533d85916a10cfa89c4552a86e29',
-          2104931648,
+        ModelChoice.omniQ4 => const ModelArtifact(
+          key: 'omni',
+          repository: 'ggml-org/Qwen2.5-Omni-3B-GGUF',
+          revision: '75f1b73b657a50f5092502799457ccb4a4a1f9df',
+          filename: 'Qwen2.5-Omni-3B-Q4_K_M.gguf',
+          sha256: '4b0bd358c1e9ec55dd3055ef6d71c958c821533d85916a10cfa89c4552a86e29',
+          size: 2104931648,
         ),
-        ModelChoice.omniQ8 => (
-          'omni_q8',
-          'c7d8b07c8d8d7a9ed1de1b8df7ac821eb4d259a224bd44310baacfaa5a473d4c',
-          3616087360,
+        ModelChoice.omniQ8 => const ModelArtifact(
+          key: 'omni_q8',
+          repository: 'ggml-org/Qwen2.5-Omni-3B-GGUF',
+          revision: '75f1b73b657a50f5092502799457ccb4a4a1f9df',
+          filename: 'Qwen2.5-Omni-3B-Q8_0.gguf',
+          sha256: 'c7d8b07c8d8d7a9ed1de1b8df7ac821eb4d259a224bd44310baacfaa5a473d4c',
+          size: 3616087360,
         ),
       };
       final files = [
         modelFile,
         if (withProjector)
-          (
-            'omni_projector',
-            '4e6c816cd33f7298d07cb780c136a396631e50e62f6501660271f8c6e302e565',
-            1538031328,
+          const ModelArtifact(
+            key: 'omni_projector',
+            repository: 'ggml-org/Qwen2.5-Omni-3B-GGUF',
+            revision: '75f1b73b657a50f5092502799457ccb4a4a1f9df',
+            filename: 'mmproj-Qwen2.5-Omni-3B-Q8_0.gguf',
+            sha256: '4e6c816cd33f7298d07cb780c136a396631e50e62f6501660271f8c6e302e565',
+            size: 1538031328,
           ),
       ];
       final paths = <String>[];
-      final totalBytes = files.fold<int>(0, (total, file) => total + file.$3);
+      final totalBytes = files.fold<int>(0, (total, file) => total + file.size);
       var completedBytes = 0;
       for (var index = 0; index < files.length; index++) {
-        final (key, checksum, expectedSize) = files[index];
-        _downloading = key;
-        await _downloads.invokeMethod<int>('start', {'key': key});
-        while (true) {
-          if (_cancelled) throw StateError('Model download stopped.');
-          final status = await _downloads.invokeMapMethod<String, dynamic>(
-            'status',
-            {'key': key},
-          );
-          if (status == null) {
-            throw StateError('Missing download status for $key.');
-          }
-          final state = status['status'] as int;
-          if (state == 8) break;
-          if (state == 16) {
-            throw StateError(
-              'Model download failed (Android reason ${status['reason']}). Tap Generate to retry.',
+        final file = files[index];
+        _downloading = file.key;
+        if (Platform.isAndroid) {
+          await _downloads.invokeMethod<int>('start', {'key': file.key});
+          while (true) {
+            if (_cancelled) throw StateError('Model download stopped.');
+            final status = await _downloads.invokeMapMethod<String, dynamic>(
+              'status',
+              {'key': file.key},
             );
+            if (status == null) {
+              throw StateError('Missing download status for ${file.key}.');
+            }
+            final state = status['status'] as int;
+            if (state == 8) break;
+            if (state == 16) {
+              throw StateError(
+                'Model download failed (Android reason ${status['reason']}). Tap Generate to retry.',
+              );
+            }
+            final received = status['received'] as int;
+            final total = status['total'] as int;
+            onProgress(
+              total > 0
+                  ? ((completedBytes + received) / totalBytes).clamp(0, 1)
+                  : null,
+            );
+            await Future<void>.delayed(const Duration(seconds: 1));
           }
-          final received = status['received'] as int;
-          final total = status['total'] as int;
-          onProgress(
-            total > 0
-                ? ((completedBytes + received) / totalBytes).clamp(0, 1)
-                : null,
+          completedBytes += file.size;
+          _downloading = null;
+          if (_cancelled) throw StateError('Model download stopped.');
+          onProgress(null);
+          final fd = await _downloads.invokeMethod<int>('open', {
+            'key': file.key,
+          });
+          if (fd == null) {
+            throw StateError('Could not open downloaded file ${file.key}.');
+          }
+          final path = '/proc/self/fd/$fd';
+          _verifying = true;
+          String? digest;
+          try {
+            digest = await _downloads.invokeMethod<String>('verify', {
+              'key': file.key,
+              'checksum': file.sha256,
+            });
+          } finally {
+            _verifying = false;
+          }
+          if (_cancelled) throw StateError('Model verification stopped.');
+          if (digest != file.sha256) {
+            throw StateError('Checksum mismatch for ${file.key}.');
+          }
+          paths.add(path);
+        } else {
+          paths.add(
+            await _modelStore.obtain(
+              file,
+              completedBytes: completedBytes,
+              totalBytes: totalBytes,
+              onProgress: onProgress,
+              cancelToken: cancel,
+            ),
           );
-          await Future<void>.delayed(const Duration(seconds: 1));
+          completedBytes += file.size;
         }
-        completedBytes += expectedSize;
         _downloading = null;
         if (_cancelled) throw StateError('Model download stopped.');
         onProgress(null);
-        final fd = await _downloads.invokeMethod<int>('open', {'key': key});
-        if (fd == null) {
-          throw StateError('Could not open downloaded file $key.');
-        }
-        final path = '/proc/self/fd/$fd';
-        _verifying = true;
-        String? digest;
-        try {
-          digest = await _downloads.invokeMethod<String>('verify', {
-            'key': key,
-            'checksum': checksum,
-          });
-        } finally {
-          _verifying = false;
-        }
-        if (_cancelled) throw StateError('Model verification stopped.');
-        if (digest != checksum) {
-          throw StateError('Checksum mismatch for $key.');
-        }
-        paths.add(path);
       }
       if (_cancelled) throw StateError('Model loading stopped.');
       await _engine.setModel(
@@ -317,19 +354,25 @@ class LocalTextGenerator implements TextGenerator {
   Future<void> cancel() async {
     _cancelled = true;
     _downloadCancel?.cancel();
+    _modelStore.cancel();
     _engine.cancelGeneration();
     final downloading = _downloading;
-    if (downloading != null) {
+    if (downloading != null && Platform.isAndroid) {
       await _downloads.invokeMethod<void>('cancel', {'key': downloading});
     }
-    if (_verifying) await _downloads.invokeMethod<void>('cancelVerification');
+    if (_verifying && Platform.isAndroid) {
+      await _downloads.invokeMethod<void>('cancelVerification');
+    }
   }
 
   @override
   Future<void> dispose() async {
     _cancelled = true;
     _downloadCancel?.cancel();
-    if (_verifying) await _downloads.invokeMethod<void>('cancelVerification');
+    _modelStore.cancel();
+    if (_verifying && Platform.isAndroid) {
+      await _downloads.invokeMethod<void>('cancelVerification');
+    }
     _engine.cancelGeneration();
     await _engine.dispose();
     if (Platform.isAndroid) await _downloads.invokeMethod<void>('close');

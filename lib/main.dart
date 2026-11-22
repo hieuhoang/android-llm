@@ -418,8 +418,8 @@ class _PromptScreenState extends State<PromptScreen> {
                     key: const Key('prompt-input'),
                     controller: _promptController,
                     enabled: !_busy,
-                    minLines: 4,
-                    maxLines: 8,
+                    minLines: 2,
+                    maxLines: 2,
                     onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(
                       hintText:
