@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +23,8 @@ class RecordingEngine extends LlamaEngine {
   final reasonings = <String>[];
   final thinkingModes = <bool>[];
   final parameters = <GenerationParams?>[];
+  final toolCalls = <List<LlamaCompletionChunkToolCall>>[];
+  final requestedTools = <List<ToolDefinition>?>[];
   LlamaModel? loadedModel;
   bool failNext = false;
   bool failAfterReply = false;
@@ -74,12 +77,16 @@ class RecordingEngine extends LlamaEngine {
     DateTime? templateNow,
   }) {
     requests.add(List.of(messages));
+    requestedTools.add(tools);
     thinkingModes.add(enableThinking);
     parameters.add(params);
     if (failNext) {
       failNext = false;
       return Stream.error(StateError('Generation failed'));
     }
+    final calls = toolCalls.isEmpty
+        ? <LlamaCompletionChunkToolCall>[]
+        : toolCalls.removeAt(0);
     final chunk = LlamaCompletionChunk(
       id: 'test',
       object: 'chat.completion.chunk',
@@ -91,8 +98,9 @@ class RecordingEngine extends LlamaEngine {
           delta: LlamaCompletionChunkDelta(
             content: replies.removeAt(0),
             thinking: reasonings.isEmpty ? null : reasonings.removeAt(0),
+            toolCalls: calls,
           ),
-          finishReason: finishReason,
+          finishReason: calls.isEmpty ? finishReason : 'tool_calls',
         ),
       ],
     );
@@ -127,6 +135,222 @@ class FakeModelStore implements AppModelFileStore {
 }
 
 void main() {
+  LlamaCompletionChunkToolCall toolCall(
+    String name,
+    String arguments, {
+    int index = 0,
+  }) => LlamaCompletionChunkToolCall(
+    index: index,
+    id: 'call_$index',
+    type: 'function',
+    function: LlamaCompletionChunkFunction(name: name, arguments: arguments),
+  );
+
+  test(
+    'offline agent runs its clock tool and retains a clean conversation',
+    () async {
+      final engine = RecordingEngine()
+        ..replies.addAll(['', 'It is today.', 'Follow-up.'])
+        ..toolCalls.add([toolCall('get_current_time', '{}')]);
+      final generator = LocalTextGenerator(engine: engine);
+
+      final answer = await generator
+          .generate('What time is it?', useAgent: true)
+          .map((chunk) => chunk.text)
+          .join();
+      expect(answer, 'It is today.');
+      expect(engine.requestedTools.first!.single.name, 'get_current_time');
+      final toolResult =
+          engine.requests[1].last.parts.single as LlamaToolResultContent;
+      expect(toolResult.name, 'get_current_time');
+      expect((toolResult.result as Map)['local_time'], isA<String>());
+
+      await generator.generate('Next').drain<void>();
+      expect(engine.requests.last.map((message) => message.role), [
+        LlamaChatRole.user,
+        LlamaChatRole.assistant,
+        LlamaChatRole.user,
+      ]);
+      expect(engine.requests.last[1].content, 'It is today.');
+    },
+  );
+
+  test(
+    'offline agent rejects unknown tools and restores prior history',
+    () async {
+      final engine = RecordingEngine()
+        ..replies.addAll(['First answer', '', 'Next answer'])
+        ..toolCalls.addAll([
+          [],
+          [toolCall('send_email', '{}')],
+        ]);
+      final generator = LocalTextGenerator(engine: engine);
+      await generator.generate('First').drain<void>();
+      await expectLater(
+        generator.generate('Send email', useAgent: true).drain<void>(),
+        throwsA(isA<StateError>()),
+      );
+      await generator.generate('Next').drain<void>();
+      expect(engine.requests.last.map((message) => message.content), [
+        'First',
+        'First answer',
+        'Next',
+      ]);
+    },
+  );
+
+  test('offline agent rejects unexpected clock arguments', () async {
+    final engine = RecordingEngine()
+      ..replies.add('')
+      ..toolCalls.add([toolCall('get_current_time', '{"unexpected":true}')]);
+    final generator = LocalTextGenerator(engine: engine);
+
+    await expectLater(
+      generator.generate('Time?', useAgent: true).drain<void>(),
+      throwsA(isA<FormatException>()),
+    );
+    expect(engine.requests, hasLength(1));
+  });
+
+  test(
+    'agent requests approval once and passes the result back to the model',
+    () async {
+      final engine = RecordingEngine()
+        ..tokensPerMessage = 50
+        ..replies.addAll(['', 'Done'])
+        ..toolCalls.add([
+          toolCall(
+            'gmail_send',
+            '{"to":"person@example.com","subject":"Hello","body":"Hi"}',
+          ),
+        ]);
+      final generator = LocalTextGenerator(engine: engine);
+      var requests = 0;
+      await generator
+          .generate(
+            'Email',
+            useAgent: true,
+            onEmailRequest: (draft) async {
+              requests++;
+              expect(draft.to, 'person@example.com');
+              expect(draft.subject, 'Hello');
+              expect(draft.body, 'Hi');
+              return {'status': 'declined'};
+            },
+          )
+          .drain<void>();
+      expect(requests, 1);
+      expect(
+        engine.requestedTools.first!.map((t) => t.name),
+        contains('gmail_send'),
+      );
+      final result =
+          engine.requests[1].last.parts.single as LlamaToolResultContent;
+      expect((result.result as Map)['status'], 'declined');
+    },
+  );
+
+  test('agent rejects malformed email and repeated proposals', () async {
+    for (final arguments in [
+      '{"to":"person@example.com\\r\\nBcc: other@example.com","subject":"Hi","body":"x"}',
+      '{"to":"person@example.com","subject":"Hi\\nBcc: x","body":"x"}',
+      '{"to":"person@example.com","subject":"Hi","body":"x","bcc":"other@example.com"}',
+    ]) {
+      final engine = RecordingEngine()
+        ..replies.add('')
+        ..toolCalls.add([toolCall('gmail_send', arguments)]);
+      var requests = 0;
+      await expectLater(
+        LocalTextGenerator(engine: engine)
+            .generate(
+              'Email',
+              useAgent: true,
+              onEmailRequest: (draft) async {
+                requests++;
+                return {'status': 'sent'};
+              },
+            )
+            .drain<void>(),
+        throwsA(isA<FormatException>()),
+      );
+      expect(requests, 0);
+    }
+    final engine = RecordingEngine()
+      ..tokensPerMessage = 50
+      ..replies.addAll(['', ''])
+      ..toolCalls.addAll(
+        List.generate(
+          2,
+          (_) => [
+            toolCall(
+              'gmail_send',
+              '{"to":"person@example.com","subject":"Hi","body":"x"}',
+            ),
+          ],
+        ),
+      );
+    var requests = 0;
+    await expectLater(
+      LocalTextGenerator(engine: engine)
+          .generate(
+            'Email',
+            useAgent: true,
+            onEmailRequest: (draft) async {
+              requests++;
+              return {'status': 'declined'};
+            },
+          )
+          .drain<void>(),
+      throwsA(isA<StateError>()),
+    );
+    expect(requests, 1);
+  });
+
+  test('concurrent email proposals cannot send more than one email', () async {
+    const arguments = '{"to":"person@example.com","subject":"Hi","body":"x"}';
+    final engine = RecordingEngine()
+      ..replies.add('')
+      ..toolCalls.add([
+        toolCall('gmail_send', arguments),
+        toolCall('gmail_send', arguments, index: 1),
+      ]);
+    final approval = Completer<Map<String, String>>();
+    var requests = 0;
+    final result = LocalTextGenerator(engine: engine)
+        .generate(
+          'Email',
+          useAgent: true,
+          onEmailRequest: (draft) {
+            requests++;
+            return approval.future;
+          },
+        )
+        .drain<void>();
+    final expectation = expectLater(result, throwsA(isA<StateError>()));
+    await Future<void>.delayed(Duration.zero);
+    expect(requests, 1);
+    approval.complete({'status': 'sent'});
+    await expectation;
+    expect(requests, 1);
+  });
+
+  test('offline agent stops repeated calls at its round limit', () async {
+    final engine = RecordingEngine()
+      ..tokensPerMessage = 50
+      ..replies.addAll(['', '', '', '', 'Next answer'])
+      ..toolCalls.addAll(
+        List.generate(4, (_) => [toolCall('get_current_time', '{}')]),
+      );
+    final generator = LocalTextGenerator(engine: engine);
+    await expectLater(
+      generator.generate('Time?', useAgent: true).drain<void>(),
+      throwsA(isA<StateError>()),
+    );
+    expect(engine.requests, hasLength(4));
+    await generator.generate('Next').drain<void>();
+    expect(engine.requests.last.single.content, 'Next');
+  });
+
   test('loads Linux models from the local model store', () async {
     final store = FakeModelStore();
     final engine = RecordingEngine();

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'gmail_sender.dart';
 import 'media_input.dart';
 import 'text_generator.dart';
 
@@ -12,10 +13,11 @@ void main() {
 }
 
 class LlmTextApp extends StatelessWidget {
-  const LlmTextApp({super.key, this.generator, this.media});
+  const LlmTextApp({super.key, this.generator, this.media, this.gmailSender});
 
   final TextGenerator? generator;
   final MediaInput? media;
+  final GmailSender? gmailSender;
 
   @override
   Widget build(BuildContext context) {
@@ -25,16 +27,21 @@ class LlmTextApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5367D5)),
         useMaterial3: true,
       ),
-      home: PromptScreen(generator: generator, media: media),
+      home: PromptScreen(
+        generator: generator,
+        media: media,
+        gmailSender: gmailSender,
+      ),
     );
   }
 }
 
 class PromptScreen extends StatefulWidget {
-  const PromptScreen({super.key, this.generator, this.media});
+  const PromptScreen({super.key, this.generator, this.media, this.gmailSender});
 
   final TextGenerator? generator;
   final MediaInput? media;
+  final GmailSender? gmailSender;
 
   @override
   State<PromptScreen> createState() => _PromptScreenState();
@@ -48,6 +55,7 @@ class _ConversationTurn {
   String reasoning = '';
   String response = '';
   String? note;
+  String? emailOutcome;
   bool truncated = false;
 }
 
@@ -57,6 +65,8 @@ class _PromptScreenState extends State<PromptScreen> {
       widget.generator ?? LocalTextGenerator();
   final _conversation = <_ConversationTurn>[];
   late final _media = widget.media ?? MediaInput();
+  late final GmailSender? _gmailSender =
+      widget.gmailSender ?? (Platform.isLinux ? GogGmailSender() : null);
   final _attachments = <PromptAttachment>[];
   ModelChoice _model = ModelChoice.qwen3;
   String _status = 'Models download on first use.';
@@ -64,11 +74,13 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _mediaBusy = false;
   bool _recording = false;
   bool _enableReasoning = true;
+  bool _useAgent = false;
   bool _useGpu = false;
   bool _loadProjector = true;
   bool _stagedMultimodal = false;
   bool _downsizeImages = false;
   bool _cancelled = false;
+  bool _sendingEmail = false;
   double? _progress;
   String? _stopError;
   static const _buildInfo = MethodChannel('llm_text_app/build_info');
@@ -143,7 +155,9 @@ class _PromptScreenState extends State<PromptScreen> {
       );
       if (!mounted || _cancelled) return;
       setState(() {
-        _status = 'Generating...';
+        _status = _useAgent && _model == ModelChoice.qwen3
+            ? 'Running offline agent...'
+            : 'Generating...';
         _progress = null;
       });
       await for (final chunk in _generator.generate(
@@ -152,6 +166,10 @@ class _PromptScreenState extends State<PromptScreen> {
         model: _model,
         attachments: turn.attachments,
         loadProjector: _loadProjector,
+        useAgent: _useAgent && _model == ModelChoice.qwen3,
+        onEmailRequest: _gmailSender == null
+            ? null
+            : (draft) => _confirmAndSendEmail(turn, draft),
       )) {
         if (!mounted) break;
         setState(() {
@@ -208,6 +226,89 @@ class _PromptScreenState extends State<PromptScreen> {
           if (screenError != null) _status = screenError;
         });
       }
+    }
+  }
+
+  Future<Map<String, String>> _confirmAndSendEmail(
+    _ConversationTurn turn,
+    GmailDraft draft,
+  ) async {
+    if (!mounted || _cancelled) return {'status': 'cancelled'};
+    final String account;
+    try {
+      account = await _gmailSender!.account();
+    } catch (error) {
+      if (mounted) {
+        setState(() => turn.emailOutcome = 'Email not sent: $error');
+      }
+      rethrow;
+    }
+    if (!mounted || _cancelled) {
+      if (mounted) setState(() => turn.emailOutcome = 'Email not sent.');
+      return {'status': 'cancelled'};
+    }
+    final approved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Text('Confirm Gmail send'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SelectableText('From: $account'),
+                SelectableText('To: ${draft.to}'),
+                SelectableText('Subject: ${draft.subject}'),
+                const SizedBox(height: 12),
+                const Text('Message:'),
+                SelectableText(draft.body),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Do not send'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Send email'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || _cancelled || approved != true) {
+      if (mounted) setState(() => turn.emailOutcome = 'Email not sent.');
+      return {'status': 'declined'};
+    }
+    setState(() {
+      _sendingEmail = true;
+      _status = 'Sending email...';
+      turn.emailOutcome = 'Sending email to ${draft.to}...';
+    });
+    try {
+      final messageId = await _gmailSender.send(draft, from: account);
+      if (mounted) {
+        setState(
+          () => turn.emailOutcome =
+              'Email sent to ${draft.to}. Gmail message ID: $messageId',
+        );
+      }
+      return {'status': 'sent', 'message_id': messageId};
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => turn.emailOutcome =
+              'Email send error: $error. If the outcome is uncertain, check Sent before retrying.',
+        );
+      }
+      rethrow;
+    } finally {
+      if (mounted) setState(() => _sendingEmail = false);
     }
   }
 
@@ -480,6 +581,23 @@ class _PromptScreenState extends State<PromptScreen> {
                       ),
                     ),
                   CheckboxListTile(
+                    key: const Key('agent-checkbox'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Enable offline agent'),
+                    subtitle: Text(
+                      Platform.isLinux
+                          ? 'Qwen3 text only. Can check the local time and request confirmation to send Gmail (requires internet).'
+                          : 'Qwen3 text only. Can check the local date and time; replies appear after the agent finishes.',
+                    ),
+                    value: _model == ModelChoice.qwen3 && _useAgent,
+                    onChanged: _busy || _model != ModelChoice.qwen3
+                        ? null
+                        : (value) => setState(() {
+                            _useAgent = value ?? false;
+                          }),
+                    controlAffinity: ListTileControlAffinity.leading,
+                  ),
+                  CheckboxListTile(
                     key: const Key('reasoning-checkbox'),
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Enable reasoning'),
@@ -520,7 +638,7 @@ class _PromptScreenState extends State<PromptScreen> {
                     const SizedBox(height: 8),
                     LinearProgressIndicator(value: _progress),
                     TextButton(
-                      onPressed: _cancelled ? null : _stop,
+                      onPressed: _cancelled || _sendingEmail ? null : _stop,
                       child: const Text('Stop'),
                     ),
                   ],
@@ -614,6 +732,10 @@ class _PromptScreenState extends State<PromptScreen> {
                                     else if (turn.note == null)
                                       const Text('Waiting for response...'),
                                     if (turn.note != null) Text(turn.note!),
+                                    if (turn.emailOutcome != null) ...[
+                                      const SizedBox(height: 8),
+                                      SelectableText(turn.emailOutcome!),
+                                    ],
                                   ],
                                 ),
                               );

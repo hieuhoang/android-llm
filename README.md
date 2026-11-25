@@ -35,6 +35,24 @@ existing projector path; it is off by default.
 model context without unloading the model. The prompt field is cleared after
 each attempt.
 
+**Enable offline agent** gives Qwen3 an experimental local date/time tool.
+Tool use is off by default, limited to three rounds, and the final reply appears
+after the agent finishes rather than streaming. The model may not reliably
+choose or use the tool. Once the model is downloaded, the agent and its time
+tool work without internet.
+
+On Linux, the agent can also request one Gmail send per turn. The app uses
+the locally installed `gog` CLI and its configured default account and Gmail
+authorization; it looks for `~/go/bin/gog` first, then `gog` on PATH. The
+app must inherit any environment needed by the gog keyring, and sending
+requires internet access. Check `gog auth status` and configure Gmail access
+if needed. Before sending, the app displays the sender, recipient, subject and
+body for explicit confirmation. The send result appears separately from the
+model's response. If the result is uncertain, check Gmail's Sent folder before
+retrying; the app never retries a send automatically. Closing the app during a
+send can also leave its outcome uncertain. Gmail sending is not yet available
+on Android or iOS; messaging is not implemented.
+
 The Android build time appears at the top of the app in local time. It identifies the
 compiled APK, not subsequent Flutter hot reloads.
 
@@ -95,8 +113,8 @@ flutter run
 flutter pub get
 flutter build apk --debug
 
-Android, iOS and Linux desktop are scaffolded. Public model storage is currently
-implemented only for Android. Run the Linux desktop app with
+Android, iOS and Linux desktop are scaffolded. Model storage is currently
+implemented for Android and Linux. Run the Linux desktop app with
 `flutter run -d linux`. iOS requires macOS and iOS 16.4 or newer.
 
 ## Test

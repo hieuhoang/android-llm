@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:llm_text_app/gmail_sender.dart';
 import 'package:llm_text_app/main.dart';
+import 'package:llm_text_app/local_agent.dart';
 import 'package:llm_text_app/media_input.dart';
 import 'package:llm_text_app/text_generator.dart';
 
@@ -45,6 +47,8 @@ class FakeGenerator implements TextGenerator {
   bool? loadProjector;
   bool? stagedMultimodal;
   bool? generationProjector;
+  bool? useAgent;
+  EmailRequest? emailRequest;
   List<PromptAttachment>? attachments;
   bool cancelled = false;
   bool historyCleared = false;
@@ -72,12 +76,16 @@ class FakeGenerator implements TextGenerator {
     ModelChoice model = ModelChoice.qwen3,
     List<PromptAttachment> attachments = const [],
     bool loadProjector = true,
+    bool useAgent = false,
+    EmailRequest? onEmailRequest,
   }) {
     this.prompt = prompt;
     reasoningEnabled = enableReasoning;
     this.model = model;
     this.attachments = attachments;
     generationProjector = loadProjector;
+    this.useAgent = useAgent;
+    emailRequest = onEmailRequest;
     output = StreamController<GenerationChunk>();
     return output!.stream;
   }
@@ -96,6 +104,22 @@ class FakeGenerator implements TextGenerator {
   }
 }
 
+class FakeGmailSender implements GmailSender {
+  final result = Completer<String>();
+  GmailDraft? sent;
+  String? from;
+
+  @override
+  Future<String> account() async => 'sender@example.com';
+
+  @override
+  Future<String> send(GmailDraft draft, {required String from}) {
+    sent = draft;
+    this.from = from;
+    return result.future;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const buildChannel = MethodChannel('llm_text_app/build_info');
@@ -111,6 +135,91 @@ void main() {
         .setMockMethodCallHandler(buildChannel, null);
   });
 
+  testWidgets('offline agent is opt-in and passed to generation', (
+    tester,
+  ) async {
+    final generator = FakeGenerator()..loading.complete();
+    await tester.pumpWidget(LlmTextApp(generator: generator));
+    final checkbox = find.byKey(const Key('agent-checkbox'));
+    expect(tester.widget<CheckboxListTile>(checkbox).value, isFalse);
+    await tester.ensureVisible(checkbox);
+    await tester.tap(checkbox);
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'What time?');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.useAgent, isTrue);
+    expect(tester.widget<CheckboxListTile>(checkbox).onChanged, isNull);
+    generator.output!.add(const GenerationChunk(text: 'Today'));
+    await generator.output!.close();
+    await tester.pump();
+  });
+
+  testWidgets(
+    'email preview requires confirmation and reports the actual result',
+    (tester) async {
+      final generator = FakeGenerator()..loading.complete();
+      final sender = FakeGmailSender();
+      await tester.pumpWidget(
+        LlmTextApp(generator: generator, gmailSender: sender),
+      );
+      await tester.enterText(
+        find.byKey(const Key('prompt-input')),
+        'Send email',
+      );
+      await tester.pump();
+      await tester.ensureVisible(find.text('Generate'));
+      await tester.tap(find.text('Generate'));
+      await tester.pump();
+
+      const draft = GmailDraft(
+        to: 'recipient@example.com',
+        subject: 'Subject',
+        body: 'Message',
+      );
+      final declined = generator.emailRequest!(draft);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('From: sender@example.com'), findsOneWidget);
+      expect(find.text('To: recipient@example.com'), findsOneWidget);
+      expect(find.text('Subject: Subject'), findsOneWidget);
+      expect(find.text('Message'), findsOneWidget);
+      await tester.tap(find.text('Do not send'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect((await declined)['status'], 'declined');
+      expect(sender.sent, isNull);
+      expect(find.text('Email not sent.'), findsOneWidget);
+
+      final approved = generator.emailRequest!(draft);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.widgetWithText(FilledButton, 'Send email'));
+      await tester.pump();
+      expect(sender.sent, same(draft));
+      expect(sender.from, 'sender@example.com');
+      expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Stop'))
+            .onPressed,
+        isNull,
+      );
+      sender.result.complete('message-123');
+      await tester.pump();
+      expect((await approved)['status'], 'sent');
+      expect(
+        find.text(
+          'Email sent to recipient@example.com. Gmail message ID: message-123',
+        ),
+        findsOneWidget,
+      );
+      await generator.output!.close();
+      await tester.pump();
+    },
+  );
+
   testWidgets('prompt input grows to at most two lines', (tester) async {
     final generator = FakeGenerator()..loading.complete();
     await tester.pumpWidget(LlmTextApp(generator: generator));
@@ -120,6 +229,40 @@ void main() {
     );
     expect(promptInput.minLines, 1);
     expect(promptInput.maxLines, 2);
+  });
+
+  testWidgets('email send failures remain visible even if generation fails', (
+    tester,
+  ) async {
+    final generator = FakeGenerator()..loading.complete();
+    final sender = FakeGmailSender();
+    await tester.pumpWidget(
+      LlmTextApp(generator: generator, gmailSender: sender),
+    );
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Send email');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    final request = generator.emailRequest!(
+      const GmailDraft(to: 'recipient@example.com', subject: 'Hi', body: 'x'),
+    );
+    final expectation = expectLater(request, throwsA(isA<StateError>()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.widgetWithText(FilledButton, 'Send email'));
+    await tester.pump();
+    sender.result.completeError(StateError('Outcome unknown'));
+    await tester.pump();
+    await expectation;
+    generator.output!.addError(StateError('Generation failed'));
+    await generator.output!.close();
+    await tester.pump();
+    expect(
+      find.textContaining('Outcome unknown', findRichText: false),
+      findsWidgets,
+    );
+    expect(find.textContaining('check Sent before retrying'), findsOneWidget);
   });
 
   testWidgets('GPU choice is applied on the next generation', (tester) async {
@@ -335,6 +478,7 @@ void main() {
       isEmpty,
     );
 
+    await tester.ensureVisible(find.text('Clear conversation'));
     await tester.tap(find.text('Clear conversation'));
     await tester.pump();
     expect(generator.historyCleared, isTrue);

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:llamadart/llamadart.dart';
 
+import 'local_agent.dart';
 import 'model_storage.dart';
 
 enum ModelChoice { qwen3, omniQ2, omniQ4, omniQ8 }
@@ -47,6 +48,8 @@ abstract interface class TextGenerator {
     ModelChoice model = ModelChoice.qwen3,
     List<PromptAttachment> attachments = const [],
     bool loadProjector = true,
+    bool useAgent = false,
+    EmailRequest? onEmailRequest,
   });
   void clearHistory();
   Future<void> cancel();
@@ -61,6 +64,7 @@ class LocalTextGenerator implements TextGenerator {
   static int _contextSizeFor(ModelChoice model) =>
       model == ModelChoice.qwen3 ? 2048 : 8192;
   final LlamaEngine _engine;
+  final LocalAgent _agent = LocalAgent();
   late final _session = ChatSession(
     _engine,
     maxContextTokens: _contextSizeFor(ModelChoice.qwen3),
@@ -86,6 +90,7 @@ class LocalTextGenerator implements TextGenerator {
   }) async {
     final withProjector = model != ModelChoice.qwen3 && loadProjector;
     final withStaging = withProjector && stagedMultimodal;
+    _cancelled = false;
     if (_loadedModel == model &&
         _loadedWithGpu == useGpu &&
         _loadedWithProjector == withProjector &&
@@ -97,7 +102,6 @@ class LocalTextGenerator implements TextGenerator {
         'Model downloads are currently supported on Android and Linux.',
       );
     }
-    _cancelled = false;
     final cancel = ModelDownloadCancelToken();
     _downloadCancel = cancel;
     try {
@@ -263,10 +267,17 @@ class LocalTextGenerator implements TextGenerator {
     ModelChoice model = ModelChoice.qwen3,
     List<PromptAttachment> attachments = const [],
     bool loadProjector = true,
+    bool useAgent = false,
+    EmailRequest? onEmailRequest,
   }) async* {
     final withProjector = model != ModelChoice.qwen3 && loadProjector;
     if (!withProjector && attachments.isNotEmpty) {
       throw ArgumentError('Image and audio input requires the Omni projector.');
+    }
+    if (useAgent && (model != ModelChoice.qwen3 || attachments.isNotEmpty)) {
+      throw ArgumentError(
+        'The offline agent currently supports Qwen3 text only.',
+      );
     }
     _session.maxContextTokens = _contextSizeFor(model);
     if (!withProjector) {
@@ -291,7 +302,48 @@ class LocalTextGenerator implements TextGenerator {
     final previousHistory = _session.history;
     final answer = StringBuffer();
     final thinking = model == ModelChoice.qwen3 && enableReasoning;
+    var restorePreviousHistory = false;
     try {
+      final params = GenerationParams(
+        maxTokens: 512,
+        thinkingBudget: thinking ? const ThinkingBudget(maxTokens: 256) : null,
+        temp: thinking ? 0.6 : 0.7,
+        topP: thinking ? 0.95 : 0.8,
+        topK: 20,
+        presencePenalty: 1.5,
+      );
+      if (useAgent) {
+        final result = await _agent.run(
+          _session,
+          prompt,
+          enableThinking: thinking,
+          params: params,
+          isCancelled: () => _cancelled,
+          onEmailRequest: onEmailRequest,
+        );
+        restorePreviousHistory = result.rolledBack;
+        switch (result.stopReason) {
+          case LlamaToolLoopStopReason.completed:
+          case LlamaToolLoopStopReason.cancelled:
+            if (!result.rolledBack) {
+              answer.write(result.text);
+              yield GenerationChunk(
+                text: result.text,
+                reasoning: result.completion.thinking,
+              );
+            }
+            return;
+          case LlamaToolLoopStopReason.truncated:
+            throw StateError('Agent response reached the token limit.');
+          case LlamaToolLoopStopReason.contextExceeded:
+            throw StateError('Agent request exceeds the context window.');
+          case LlamaToolLoopStopReason.maxRounds:
+            throw StateError('Agent reached the tool-call limit.');
+          case LlamaToolLoopStopReason.unhandledToolCalls:
+            restorePreviousHistory = true;
+            throw StateError('Agent requested an unhandled tool.');
+        }
+      }
       await for (final chunk in _session.create(
         [
           LlamaTextContent(prompt),
@@ -302,16 +354,7 @@ class LocalTextGenerator implements TextGenerator {
               LlamaAudioContent(path: attachment.path),
         ],
         enableThinking: thinking,
-        params: GenerationParams(
-          maxTokens: 512,
-          thinkingBudget: thinking
-              ? const ThinkingBudget(maxTokens: 256)
-              : null,
-          temp: thinking ? 0.6 : 0.7,
-          topP: thinking ? 0.95 : 0.8,
-          topK: 20,
-          presencePenalty: 1.5,
-        ),
+        params: params,
       )) {
         answer.write(chunk.text);
         if (chunk.text.isNotEmpty ||
@@ -330,11 +373,16 @@ class LocalTextGenerator implements TextGenerator {
       }
       rethrow;
     } finally {
-      final history = answer.toString().trim().isNotEmpty
+      final history =
+          !restorePreviousHistory && answer.toString().trim().isNotEmpty
           ? _session.history
           : previousHistory;
       _session.reset();
       for (final message in history) {
+        if (message.role == LlamaChatRole.tool ||
+            message.parts.any((part) => part is LlamaToolCallContent)) {
+          continue;
+        }
         _session.addMessage(
           message.role == LlamaChatRole.assistant
               ? LlamaChatMessage.fromText(
