@@ -124,6 +124,13 @@ class FakeGmailSender implements GmailSender {
   }
 }
 
+class PendingAccountGmailSender extends FakeGmailSender {
+  final pendingAccount = Completer<String>();
+
+  @override
+  Future<String> account() => pendingAccount.future;
+}
+
 class FakeAutomaticGmailAuthorization implements GmailAuthorization {
   int connections = 0;
 
@@ -185,6 +192,14 @@ void main() {
       await tester.pumpWidget(
         LlmTextApp(generator: generator, gmailSender: sender),
       );
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.byKey(const Key('confirm-email-checkbox')),
+            )
+            .value,
+        isTrue,
+      );
       await tester.enterText(
         find.byKey(const Key('prompt-input')),
         'Send email',
@@ -239,6 +254,87 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('sends without a dialog when confirmation is disabled', (
+    tester,
+  ) async {
+    final generator = FakeGenerator()..loading.complete();
+    final sender = FakeGmailSender();
+    await tester.pumpWidget(
+      LlmTextApp(generator: generator, gmailSender: sender),
+    );
+    final checkbox = find.byKey(const Key('confirm-email-checkbox'));
+    await tester.ensureVisible(checkbox);
+    await tester.tap(checkbox);
+    await tester.pump();
+    expect(tester.widget<CheckboxListTile>(checkbox).value, isFalse);
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Send email');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(tester.widget<CheckboxListTile>(checkbox).onChanged, isNull);
+
+    const draft = GmailDraft(
+      to: 'recipient@example.com',
+      subject: 'Subject',
+      body: 'Message',
+    );
+    final request = generator.emailRequest!(draft);
+    await tester.pump();
+    expect(find.text('Confirm Gmail send'), findsNothing);
+    expect(sender.sent, same(draft));
+    expect(sender.from, 'sender@example.com');
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Stop'))
+          .onPressed,
+      isNull,
+    );
+    sender.result.complete('message-123');
+    await tester.pump();
+    expect((await request)['status'], 'sent');
+    expect(
+      find.text(
+        'Email sent to recipient@example.com. Gmail message ID: message-123',
+      ),
+      findsOneWidget,
+    );
+    await generator.output!.close();
+    await tester.pump();
+  });
+
+  testWidgets('stopping during Gmail connection prevents automatic send', (
+    tester,
+  ) async {
+    final generator = FakeGenerator()..loading.complete();
+    final sender = PendingAccountGmailSender();
+    await tester.pumpWidget(
+      LlmTextApp(generator: generator, gmailSender: sender),
+    );
+    final checkbox = find.byKey(const Key('confirm-email-checkbox'));
+    await tester.ensureVisible(checkbox);
+    await tester.tap(checkbox);
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Send email');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    final request = generator.emailRequest!(
+      const GmailDraft(to: 'recipient@example.com', subject: 'Hi', body: 'x'),
+    );
+    await tester.pump();
+    await tester.ensureVisible(find.text('Stop'));
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+    sender.pendingAccount.complete('sender@example.com');
+    await tester.pump();
+    expect((await request)['status'], 'cancelled');
+    expect(sender.sent, isNull);
+    await generator.output!.close();
+    await tester.pump();
+  });
 
   testWidgets(
     'connects Gmail on an email request before showing confirmation',

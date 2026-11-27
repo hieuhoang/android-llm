@@ -82,6 +82,7 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _recording = false;
   bool _enableReasoning = true;
   bool _useAgent = false;
+  bool _confirmEmail = true;
   bool _useGpu = false;
   bool _loadProjector = true;
   bool _stagedMultimodal = false;
@@ -176,7 +177,7 @@ class _PromptScreenState extends State<PromptScreen> {
         useAgent: _useAgent && _model == ModelChoice.qwen3,
         onEmailRequest: _gmailSender == null
             ? null
-            : (draft) => _confirmAndSendEmail(turn, draft),
+            : (draft) => _sendEmail(turn, draft),
         onCalculation: (calculation) {
           if (mounted && !_cancelled) {
             setState(() => turn.calculations.add(calculation.description));
@@ -241,7 +242,7 @@ class _PromptScreenState extends State<PromptScreen> {
     }
   }
 
-  Future<Map<String, String>> _confirmAndSendEmail(
+  Future<Map<String, String>> _sendEmail(
     _ConversationTurn turn,
     GmailDraft draft,
   ) async {
@@ -265,43 +266,45 @@ class _PromptScreenState extends State<PromptScreen> {
     if (_gmailSender is GoogleGmailSender) {
       setState(() => _status = 'Running offline agent...');
     }
-    final approved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          title: const Text('Confirm Gmail send'),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SelectableText('From: $account'),
-                SelectableText('To: ${draft.to}'),
-                SelectableText('Subject: ${draft.subject}'),
-                const SizedBox(height: 12),
-                const Text('Message:'),
-                SelectableText(draft.body),
-              ],
+    if (_confirmEmail) {
+      final approved = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('Confirm Gmail send'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SelectableText('From: $account'),
+                  SelectableText('To: ${draft.to}'),
+                  SelectableText('Subject: ${draft.subject}'),
+                  const SizedBox(height: 12),
+                  const Text('Message:'),
+                  SelectableText(draft.body),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Do not send'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Send email'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Do not send'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Send email'),
-            ),
-          ],
         ),
-      ),
-    );
-    if (!mounted || _cancelled || approved != true) {
-      if (mounted) setState(() => turn.emailOutcome = 'Email not sent.');
-      return {'status': 'declined'};
+      );
+      if (!mounted || _cancelled || approved != true) {
+        if (mounted) setState(() => turn.emailOutcome = 'Email not sent.');
+        return {'status': 'declined'};
+      }
     }
     setState(() {
       _sendingEmail = true;
@@ -604,7 +607,7 @@ class _PromptScreenState extends State<PromptScreen> {
                     title: const Text('Enable offline agent'),
                     subtitle: Text(
                       Platform.isLinux || Platform.isAndroid
-                          ? 'Qwen3 text only. Can calculate, check the local time and request confirmation to send Gmail (requires internet).'
+                          ? 'Qwen3 text only. Can calculate, check the local time and send Gmail (requires internet).'
                           : 'Qwen3 text only. Can calculate and check the local date and time; replies appear after the agent finishes.',
                     ),
                     value: _model == ModelChoice.qwen3 && _useAgent,
@@ -615,6 +618,22 @@ class _PromptScreenState extends State<PromptScreen> {
                           }),
                     controlAffinity: ListTileControlAffinity.leading,
                   ),
+                  if (_gmailSender != null)
+                    CheckboxListTile(
+                      key: const Key('confirm-email-checkbox'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Confirm before sending Gmail'),
+                      subtitle: const Text(
+                        'If disabled, the agent can send emails without review.',
+                      ),
+                      value: _confirmEmail,
+                      onChanged: _busy
+                          ? null
+                          : (value) => setState(() {
+                              _confirmEmail = value ?? true;
+                            }),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
                   CheckboxListTile(
                     key: const Key('reasoning-checkbox'),
                     contentPadding: EdgeInsets.zero,

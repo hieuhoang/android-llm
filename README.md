@@ -50,17 +50,19 @@ the locally installed `gog` CLI and its configured default account and Gmail
 authorization; it looks for `~/go/bin/gog` first, then `gog` on PATH. The
 app must inherit any environment needed by the gog keyring, and sending
 requires internet access. Check `gog auth status` and configure Gmail access
-if needed. Before sending, the app displays the sender, recipient, subject and
-body for explicit confirmation. The send result appears separately from the
-model's response. If the result is uncertain, check Gmail's Sent folder before
+if needed. By default, before sending, the app displays the sender, recipient,
+subject and body for explicit confirmation. Uncheck **Confirm before sending
+Gmail** to let the agent send without review; this setting resets when the app
+restarts. The send result appears separately from the model's response. If the
+result is uncertain, check Gmail's Sent folder before
 retrying; the app never retries a send automatically. Closing the app during a
 send can also leave its outcome uncertain.
 
 On Android, the app connects to Gmail when an email is requested. It attempts
 to restore the previous sign-in; Google may ask you to select an account or
 grant Gmail send access when needed. This uses Google Sign-In and the Gmail API,
-not Linux `gog` credentials. Every message requires confirmation showing the
-sender, recipient, subject and body. A failed or uncertain send must not be
+not Linux `gog` credentials. The same confirmation setting applies on Android.
+A failed or uncertain send must not be
 retried without checking Sent first. iOS Gmail and messaging are not
 implemented.
 
