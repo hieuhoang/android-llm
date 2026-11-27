@@ -35,7 +35,11 @@ existing projector path; it is off by default.
 model context without unloading the model. The prompt field is cleared after
 each attempt.
 
-**Enable offline agent** gives Qwen3 an experimental local date/time tool.
+**Enable offline agent** gives Qwen3 experimental local date/time and
+calculator tools. The calculator supports addition, subtraction,
+multiplication and division of two numbers using double-precision
+floating-point arithmetic. Its result is shown separately from the model's
+answer.
 Tool use is off by default, limited to three rounds, and the final reply appears
 after the agent finishes rather than streaming. The model may not reliably
 choose or use the tool. Once the model is downloaded, the agent and its time
@@ -50,8 +54,28 @@ if needed. Before sending, the app displays the sender, recipient, subject and
 body for explicit confirmation. The send result appears separately from the
 model's response. If the result is uncertain, check Gmail's Sent folder before
 retrying; the app never retries a send automatically. Closing the app during a
-send can also leave its outcome uncertain. Gmail sending is not yet available
-on Android or iOS; messaging is not implemented.
+send can also leave its outcome uncertain.
+
+On Android, direct Gmail sending uses Google Sign-In and the Gmail API, not the
+Linux `gog` credentials. Before connecting:
+
+1. Enable the Gmail API in a Google Cloud project and configure its OAuth
+   consent screen with the `https://www.googleapis.com/auth/gmail.send` scope.
+   If the app is in Testing, add the Gmail account as a test user.
+2. Create an Android OAuth client for package `com.example.llm_text_app` and
+   the signing certificate's SHA-1. For the default debug build, obtain it with
+   `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`.
+   Other signing keys need their own Android client registration.
+3. In the same project, create a Web application OAuth client. In the Android
+   app, tap **Connect Gmail**, enter the web client ID (not the client secret),
+   then select the Google account and grant Gmail send access.
+
+The public client ID is saved on the device; reconnect Gmail after restarting
+the app or if authorization expires. If changing the client ID after a
+connection attempt, restart the app and connect again. Every message still
+requires confirmation showing the sender, recipient, subject and body. A
+failed or uncertain send must not be retried without checking Sent first.
+iOS Gmail and messaging are not implemented.
 
 The Android build time appears at the top of the app in local time. It identifies the
 compiled APK, not subsequent Flutter hot reloads.

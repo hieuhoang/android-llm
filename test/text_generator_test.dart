@@ -159,7 +159,10 @@ void main() {
           .map((chunk) => chunk.text)
           .join();
       expect(answer, 'It is today.');
-      expect(engine.requestedTools.first!.single.name, 'get_current_time');
+      expect(
+        engine.requestedTools.first!.map((tool) => tool.name),
+        contains('get_current_time'),
+      );
       final toolResult =
           engine.requests[1].last.parts.single as LlamaToolResultContent;
       expect(toolResult.name, 'get_current_time');
@@ -211,6 +214,72 @@ void main() {
     );
     expect(engine.requests, hasLength(1));
   });
+
+  test(
+    'calculator runs each operation and returns its result to the model',
+    () async {
+      for (final (operator, expected) in [
+        ('add', 9.0),
+        ('subtract', 3.0),
+        ('multiply', 18.0),
+        ('divide', 2.0),
+      ]) {
+        final engine = RecordingEngine()
+          ..tokensPerMessage = 50
+          ..replies.addAll(['', 'Done'])
+          ..toolCalls.add([
+            toolCall(
+              'calculate',
+              '{"left":6,"operator":"$operator","right":3}',
+            ),
+          ]);
+        final descriptions = <String>[];
+        await LocalTextGenerator(engine: engine)
+            .generate(
+              'Calculate',
+              useAgent: true,
+              onCalculation: (calculation) {
+                descriptions.add(calculation.description);
+              },
+            )
+            .drain<void>();
+        final result =
+            engine.requests[1].last.parts.single as LlamaToolResultContent;
+        expect(result.name, 'calculate');
+        expect((result.result as Map)['result'], expected);
+        expect(descriptions.single, contains('= $expected'));
+      }
+    },
+  );
+
+  test(
+    'calculator rejects malformed arguments, division by zero and overflow',
+    () async {
+      for (final arguments in [
+        '{"left":1,"operator":"divide","right":0}',
+        '{"left":1,"operator":"power","right":2}',
+        '{"left":"1","operator":"add","right":2}',
+        '{"left":1,"operator":"add","right":2,"extra":1}',
+        '{"left":1e308,"operator":"multiply","right":1e308}',
+      ]) {
+        final engine = RecordingEngine()
+          ..replies.add('')
+          ..toolCalls.add([toolCall('calculate', arguments)]);
+        var callbacks = 0;
+        await expectLater(
+          LocalTextGenerator(engine: engine)
+              .generate(
+                'Calculate',
+                useAgent: true,
+                onCalculation: (_) => callbacks++,
+              )
+              .drain<void>(),
+          throwsA(isA<FormatException>()),
+        );
+        expect(callbacks, 0);
+      }
+    },
+  );
 
   test(
     'agent requests approval once and passes the result back to the model',

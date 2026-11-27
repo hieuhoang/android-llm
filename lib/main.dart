@@ -3,8 +3,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'gmail_sender.dart';
+import 'google_gmail_sender.dart';
 import 'media_input.dart';
 import 'text_generator.dart';
 
@@ -56,6 +58,7 @@ class _ConversationTurn {
   String response = '';
   String? note;
   String? emailOutcome;
+  final calculations = <String>[];
   bool truncated = false;
 }
 
@@ -66,7 +69,12 @@ class _PromptScreenState extends State<PromptScreen> {
   final _conversation = <_ConversationTurn>[];
   late final _media = widget.media ?? MediaInput();
   late final GmailSender? _gmailSender =
-      widget.gmailSender ?? (Platform.isLinux ? GogGmailSender() : null);
+      widget.gmailSender ??
+      (Platform.isLinux
+          ? GogGmailSender()
+          : Platform.isAndroid
+          ? GoogleGmailSender()
+          : null);
   final _attachments = <PromptAttachment>[];
   ModelChoice _model = ModelChoice.qwen3;
   String _status = 'Models download on first use.';
@@ -81,6 +89,7 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _downsizeImages = false;
   bool _cancelled = false;
   bool _sendingEmail = false;
+  bool _connectingGmail = false;
   double? _progress;
   String? _stopError;
   static const _buildInfo = MethodChannel('llm_text_app/build_info');
@@ -114,6 +123,7 @@ class _PromptScreenState extends State<PromptScreen> {
   Future<void> _generate() async {
     final prompt = _promptController.text.trim();
     if (_busy ||
+        _connectingGmail ||
         _mediaBusy ||
         _recording ||
         (prompt.isEmpty && _attachments.isEmpty) ||
@@ -170,6 +180,11 @@ class _PromptScreenState extends State<PromptScreen> {
         onEmailRequest: _gmailSender == null
             ? null
             : (draft) => _confirmAndSendEmail(turn, draft),
+        onCalculation: (calculation) {
+          if (mounted && !_cancelled) {
+            setState(() => turn.calculations.add(calculation.description));
+          }
+        },
       )) {
         if (!mounted) break;
         setState(() {
@@ -226,6 +241,68 @@ class _PromptScreenState extends State<PromptScreen> {
           if (screenError != null) _status = screenError;
         });
       }
+    }
+  }
+
+  Future<void> _connectGmail(ConnectableGmailSender sender) async {
+    if (_connectingGmail || _busy) return;
+    setState(() {
+      _connectingGmail = true;
+      _status = 'Preparing Gmail connection...';
+    });
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      var enteredId = preferences.getString('gmail_web_client_id') ?? '';
+      final clientId = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Connect Gmail'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Enter your Google Cloud web OAuth client ID. Do not enter a client secret.',
+              ),
+              TextFormField(
+                initialValue: enteredId,
+                onChanged: (value) => enteredId = value,
+                key: const Key('gmail-client-id'),
+                decoration: const InputDecoration(
+                  labelText: 'Web OAuth client ID',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, enteredId.trim()),
+              child: const Text('Connect'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || clientId == null) return;
+      if (!RegExp(r'^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$')
+          .hasMatch(clientId)) {
+        throw const FormatException(
+          'Enter a valid Google web OAuth client ID.',
+        );
+      }
+      if (!await preferences.setString('gmail_web_client_id', clientId)) {
+        throw StateError('Could not save the Google client ID.');
+      }
+      await sender.connect(clientId);
+      final account = await sender.account();
+      if (mounted) setState(() => _status = 'Gmail connected: $account');
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Gmail connection failed: $error');
+    } finally {
+      if (mounted) setState(() => _connectingGmail = false);
     }
   }
 
@@ -585,9 +662,9 @@ class _PromptScreenState extends State<PromptScreen> {
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Enable offline agent'),
                     subtitle: Text(
-                      Platform.isLinux
-                          ? 'Qwen3 text only. Can check the local time and request confirmation to send Gmail (requires internet).'
-                          : 'Qwen3 text only. Can check the local date and time; replies appear after the agent finishes.',
+                      Platform.isLinux || Platform.isAndroid
+                          ? 'Qwen3 text only. Can calculate, check the local time and request confirmation to send Gmail (requires internet).'
+                          : 'Qwen3 text only. Can calculate and check the local date and time; replies appear after the agent finishes.',
                     ),
                     value: _model == ModelChoice.qwen3 && _useAgent,
                     onChanged: _busy || _model != ModelChoice.qwen3
@@ -597,6 +674,14 @@ class _PromptScreenState extends State<PromptScreen> {
                           }),
                     controlAffinity: ListTileControlAffinity.leading,
                   ),
+                  if (_gmailSender case final ConnectableGmailSender sender)
+                    OutlinedButton(
+                      onPressed:
+                          _busy || _connectingGmail || _mediaBusy || _recording
+                          ? null
+                          : () => _connectGmail(sender),
+                      child: const Text('Connect Gmail'),
+                    ),
                   CheckboxListTile(
                     key: const Key('reasoning-checkbox'),
                     contentPadding: EdgeInsets.zero,
@@ -624,6 +709,7 @@ class _PromptScreenState extends State<PromptScreen> {
                   FilledButton(
                     onPressed:
                         _busy ||
+                            _connectingGmail ||
                             _mediaBusy ||
                             _recording ||
                             (_promptController.text.trim().isEmpty &&
@@ -732,6 +818,10 @@ class _PromptScreenState extends State<PromptScreen> {
                                     else if (turn.note == null)
                                       const Text('Waiting for response...'),
                                     if (turn.note != null) Text(turn.note!),
+                                    for (final calculation in turn.calculations)
+                                      SelectableText(
+                                        'Calculator: $calculation',
+                                      ),
                                     if (turn.emailOutcome != null) ...[
                                       const SizedBox(height: 8),
                                       SelectableText(turn.emailOutcome!),

@@ -8,6 +8,7 @@ import 'package:llm_text_app/main.dart';
 import 'package:llm_text_app/local_agent.dart';
 import 'package:llm_text_app/media_input.dart';
 import 'package:llm_text_app/text_generator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FakeMediaInput extends MediaInput {
   final resizeChoices = <(AttachmentKind, bool)>[];
@@ -49,6 +50,7 @@ class FakeGenerator implements TextGenerator {
   bool? generationProjector;
   bool? useAgent;
   EmailRequest? emailRequest;
+  void Function(Calculation)? onCalculation;
   List<PromptAttachment>? attachments;
   bool cancelled = false;
   bool historyCleared = false;
@@ -78,6 +80,7 @@ class FakeGenerator implements TextGenerator {
     bool loadProjector = true,
     bool useAgent = false,
     EmailRequest? onEmailRequest,
+    void Function(Calculation)? onCalculation,
   }) {
     this.prompt = prompt;
     reasoningEnabled = enableReasoning;
@@ -86,6 +89,7 @@ class FakeGenerator implements TextGenerator {
     generationProjector = loadProjector;
     this.useAgent = useAgent;
     emailRequest = onEmailRequest;
+    this.onCalculation = onCalculation;
     output = StreamController<GenerationChunk>();
     return output!.stream;
   }
@@ -117,6 +121,16 @@ class FakeGmailSender implements GmailSender {
     sent = draft;
     this.from = from;
     return result.future;
+  }
+}
+
+class FakeConnectableGmailSender extends FakeGmailSender
+    implements ConnectableGmailSender {
+  String? clientId;
+
+  @override
+  Future<void> connect(String clientId) async {
+    this.clientId = clientId;
   }
 }
 
@@ -229,6 +243,53 @@ void main() {
     );
     expect(promptInput.minLines, 1);
     expect(promptInput.maxLines, 2);
+  });
+
+  testWidgets('shows the actual calculator result separately from the answer', (
+    tester,
+  ) async {
+    final generator = FakeGenerator()..loading.complete();
+    await tester.pumpWidget(LlmTextApp(generator: generator));
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'Calculate');
+    await tester.pump();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    generator.onCalculation!(const Calculation(6, 'multiply', 3, 18));
+    generator.output!.add(const GenerationChunk(text: 'Eighteen'));
+    await generator.output!.close();
+    await tester.pump();
+    expect(find.text('Eighteen'), findsOneWidget);
+    expect(find.text('Calculator: 6 * 3 = 18.0'), findsOneWidget);
+  });
+
+  testWidgets('connect Gmail saves the client ID and connects the account', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final sender = FakeConnectableGmailSender();
+    await tester.pumpWidget(
+      LlmTextApp(
+        generator: FakeGenerator()..loading.complete(),
+        gmailSender: sender,
+      ),
+    );
+    final button = find.widgetWithText(OutlinedButton, 'Connect Gmail');
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    const clientId = '123-example.apps.googleusercontent.com';
+    await tester.enterText(find.byKey(const Key('gmail-client-id')), clientId);
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(sender.clientId, clientId);
+    expect(
+      (await SharedPreferences.getInstance()).getString('gmail_web_client_id'),
+      clientId,
+    );
+    expect(find.text('Gmail connected: sender@example.com'), findsOneWidget);
   });
 
   testWidgets('email send failures remain visible even if generation fails', (

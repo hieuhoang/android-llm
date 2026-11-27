@@ -6,6 +6,26 @@ import 'gmail_sender.dart';
 
 typedef EmailRequest = Future<Map<String, String>> Function(GmailDraft draft);
 
+class Calculation {
+  const Calculation(this.left, this.operator, this.right, this.result);
+
+  final num left;
+  final String operator;
+  final num right;
+  final double result;
+
+  String get description {
+    final symbol = switch (operator) {
+      'add' => '+',
+      'subtract' => '-',
+      'multiply' => '*',
+      'divide' => '/',
+      _ => throw StateError('Unknown calculator operator.'),
+    };
+    return '$left $symbol $right = $result';
+  }
+}
+
 class LocalAgent {
   LocalAgent({DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
 
@@ -18,6 +38,22 @@ class LocalAgent {
       parameters: [],
     ),
   ];
+
+  static final _calculatorTool = ToolDefinition(
+    name: 'calculate',
+    description:
+        'Calculate the result of an arithmetic operation on two numbers.',
+    parameters: [
+      ToolParam.number('left', description: 'First number', required: true),
+      ToolParam.enumType(
+        'operator',
+        values: ['add', 'subtract', 'multiply', 'divide'],
+        description: 'Arithmetic operation',
+        required: true,
+      ),
+      ToolParam.number('right', description: 'Second number', required: true),
+    ],
+  );
 
   static final _gmailTool = ToolDefinition(
     name: 'gmail_send',
@@ -44,11 +80,16 @@ class LocalAgent {
     required GenerationParams params,
     required bool Function() isCancelled,
     EmailRequest? onEmailRequest,
+    void Function(Calculation)? onCalculation,
   }) {
     var emailRequested = false;
     return session.sendWithTools(
       prompt,
-      tools: [...tools, if (onEmailRequest != null) _gmailTool],
+      tools: [
+        ...tools,
+        _calculatorTool,
+        if (onEmailRequest != null) _gmailTool,
+      ],
       maxRounds: 3,
       enableThinking: enableThinking,
       params: params,
@@ -57,6 +98,11 @@ class LocalAgent {
         final arguments = jsonDecode(call.rawJson);
         if (arguments is! Map) {
           throw const FormatException('Tool arguments must be a JSON object.');
+        }
+        if (call.name == 'calculate') {
+          final calculation = _calculate(arguments);
+          onCalculation?.call(calculation);
+          return {'result': calculation.result};
         }
         if (call.name == 'gmail_send' && onEmailRequest != null) {
           if (emailRequested) {
@@ -83,6 +129,39 @@ class LocalAgent {
       onToolError: (call, error, stackTrace) =>
           Error.throwWithStackTrace(error, stackTrace),
     );
+  }
+
+  Calculation _calculate(Map arguments) {
+    final left = arguments['left'];
+    final right = arguments['right'];
+    final operator = arguments['operator'];
+    if (arguments.length != 3 ||
+        left is! num ||
+        right is! num ||
+        !left.isFinite ||
+        !right.isFinite ||
+        operator is! String ||
+        !const ['add', 'subtract', 'multiply', 'divide'].contains(operator)) {
+      throw const FormatException(
+        'Calculator requires two finite numbers and a valid operator.',
+      );
+    }
+    if (operator == 'divide' && right == 0) {
+      throw const FormatException('Cannot divide by zero.');
+    }
+    final a = left.toDouble();
+    final b = right.toDouble();
+    final result = switch (operator) {
+      'add' => a + b,
+      'subtract' => a - b,
+      'multiply' => a * b,
+      'divide' => a / b,
+      _ => throw StateError('Unknown calculator operator.'),
+    };
+    if (!result.isFinite) {
+      throw const FormatException('Calculator result is not finite.');
+    }
+    return Calculation(left, operator, right, result);
   }
 
   GmailDraft _emailDraft(Map arguments) {

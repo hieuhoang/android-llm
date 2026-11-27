@@ -50,6 +50,7 @@ abstract interface class TextGenerator {
     bool loadProjector = true,
     bool useAgent = false,
     EmailRequest? onEmailRequest,
+    void Function(Calculation)? onCalculation,
   });
   void clearHistory();
   Future<void> cancel();
@@ -269,6 +270,7 @@ class LocalTextGenerator implements TextGenerator {
     bool loadProjector = true,
     bool useAgent = false,
     EmailRequest? onEmailRequest,
+    void Function(Calculation)? onCalculation,
   }) async* {
     final withProjector = model != ModelChoice.qwen3 && loadProjector;
     if (!withProjector && attachments.isNotEmpty) {
@@ -320,6 +322,7 @@ class LocalTextGenerator implements TextGenerator {
           params: params,
           isCancelled: () => _cancelled,
           onEmailRequest: onEmailRequest,
+          onCalculation: onCalculation,
         );
         restorePreviousHistory = result.rolledBack;
         switch (result.stopReason) {

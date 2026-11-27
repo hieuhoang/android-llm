@@ -19,6 +19,10 @@ abstract interface class GmailSender {
   Future<String> send(GmailDraft draft, {required String from});
 }
 
+abstract interface class ConnectableGmailSender implements GmailSender {
+  Future<void> connect(String clientId);
+}
+
 final _emailPattern = RegExp(
   r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$",
 );
@@ -108,7 +112,7 @@ class GogGmailSender implements GmailSender {
     final int exitCode;
     try {
       exitCode = await (() async {
-        process.stdin.write(_buildMessage(draft, from));
+        process.stdin.write(buildGmailMessage(draft, from));
         await process.stdin.close();
         return await process.exitCode;
       })().timeout(const Duration(seconds: 60));
@@ -153,38 +157,38 @@ class GogGmailSender implements GmailSender {
     }
     return result['messageId'] as String;
   }
+}
 
-  String _buildMessage(GmailDraft draft, String from) {
-    final encodedWords = <String>[];
-    var bytes = <int>[];
-    void addWord() {
-      if (bytes.isNotEmpty) {
-        encodedWords.add('=?UTF-8?B?${base64.encode(bytes)}?=');
-        bytes = <int>[];
-      }
+String buildGmailMessage(GmailDraft draft, String from) {
+  final encodedWords = <String>[];
+  var bytes = <int>[];
+  void addWord() {
+    if (bytes.isNotEmpty) {
+      encodedWords.add('=?UTF-8?B?${base64.encode(bytes)}?=');
+      bytes = <int>[];
     }
-
-    for (final rune in draft.subject.runes) {
-      final next = utf8.encode(String.fromCharCode(rune));
-      if (bytes.length + next.length > 36) addWord();
-      bytes.addAll(next);
-    }
-    addWord();
-    final body = base64.encode(utf8.encode(draft.body));
-    final bodyLines = <String>[
-      for (var start = 0; start < body.length; start += 76)
-        body.substring(start, (start + 76).clamp(0, body.length)),
-    ];
-    return [
-      'From: $from',
-      'To: ${draft.to}',
-      'Subject: ${encodedWords.join('\r\n ')}',
-      'MIME-Version: 1.0',
-      'Content-Type: text/plain; charset=UTF-8',
-      'Content-Transfer-Encoding: base64',
-      '',
-      ...bodyLines,
-      '',
-    ].join('\r\n');
   }
+
+  for (final rune in draft.subject.runes) {
+    final next = utf8.encode(String.fromCharCode(rune));
+    if (bytes.length + next.length > 36) addWord();
+    bytes.addAll(next);
+  }
+  addWord();
+  final body = base64.encode(utf8.encode(draft.body));
+  final bodyLines = <String>[
+    for (var start = 0; start < body.length; start += 76)
+      body.substring(start, (start + 76).clamp(0, body.length)),
+  ];
+  return [
+    'From: $from',
+    'To: ${draft.to}',
+    'Subject: ${encodedWords.join('\r\n ')}',
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    ...bodyLines,
+    '',
+  ].join('\r\n');
 }
