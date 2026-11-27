@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamadart/llamadart.dart';
+import 'package:llm_text_app/local_agent.dart';
 import 'package:llm_text_app/model_storage.dart';
 import 'package:llm_text_app/text_generator.dart';
 
@@ -175,6 +176,83 @@ void main() {
         LlamaChatRole.user,
       ]);
       expect(engine.requests.last[1].content, 'It is today.');
+    },
+  );
+
+  for (final model in [
+    ModelChoice.omniQ2,
+    ModelChoice.omniQ4,
+    ModelChoice.omniQ8,
+  ]) {
+    test(
+      '$model agent supplies tool definitions and runs the calculator',
+      () async {
+        final engine = RecordingEngine()
+          ..replies.addAll(['', 'Six.', 'Next.'])
+          ..toolCalls.add([
+            toolCall('calculate', '{"left":2,"operator":"multiply","right":3}'),
+          ]);
+        final generator = LocalTextGenerator(engine: engine);
+        Calculation? calculation;
+        final answer = await generator
+            .generate(
+              'Multiply 2 by 3.',
+              model: model,
+              useAgent: true,
+              onCalculation: (value) => calculation = value,
+            )
+            .map((chunk) => chunk.text)
+            .join();
+        expect(answer, 'Six.');
+        expect(calculation?.result, 6);
+        expect(engine.requests.first.first.role, LlamaChatRole.system);
+        expect(engine.requests.first.first.content, contains('"calculate"'));
+        expect(engine.thinkingModes, [false, false]);
+        await generator.generate('Next', model: model).drain<void>();
+        expect(engine.requests.last.first.role, LlamaChatRole.user);
+      },
+    );
+  }
+
+  test(
+    'agent rejects current and previous media without losing history',
+    () async {
+      final engine = RecordingEngine()..replies.addAll(['Seen', 'Answer']);
+      final generator = LocalTextGenerator(engine: engine);
+      const image = PromptAttachment(
+        kind: AttachmentKind.image,
+        path: '/test/image.jpg',
+        name: 'image.jpg',
+      );
+      await expectLater(
+        generator
+            .generate(
+              'Describe',
+              model: ModelChoice.omniQ2,
+              useAgent: true,
+              attachments: [image],
+            )
+            .drain<void>(),
+        throwsArgumentError,
+      );
+      await generator
+          .generate('Describe', model: ModelChoice.omniQ2, attachments: [image])
+          .drain<void>();
+      await expectLater(
+        generator
+            .generate('Follow up', model: ModelChoice.omniQ2, useAgent: true)
+            .drain<void>(),
+        throwsArgumentError,
+      );
+      await generator
+          .generate(
+            'Follow up',
+            model: ModelChoice.omniQ2,
+            loadProjector: false,
+            useAgent: true,
+          )
+          .drain<void>();
+      expect(engine.requests.last[1].content, 'Describe\n[Image attached]');
     },
   );
 

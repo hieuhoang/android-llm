@@ -184,6 +184,45 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('Omni agent is selectable and blocks current attachments', (
+    tester,
+  ) async {
+    final generator = FakeGenerator()..loading.complete();
+    await tester.pumpWidget(
+      LlmTextApp(generator: generator, media: FakeMediaInput()),
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<ModelChoice>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Qwen2.5 Omni 3B Q2_K').last);
+    await tester.pumpAndSettle();
+    final agent = find.byKey(const Key('agent-checkbox'));
+    await tester.ensureVisible(agent);
+    await tester.tap(agent);
+    await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(agent).value, isTrue);
+    await tester.ensureVisible(find.text('Add image'));
+    await tester.tap(find.text('Add image'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('turn off the offline agent'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Generate'))
+          .onPressed,
+      isNull,
+    );
+    await tester.ensureVisible(find.byTooltip('Remove attachment'));
+    await tester.tap(find.byTooltip('Remove attachment'));
+    await tester.enterText(find.byKey(const Key('prompt-input')), 'What time?');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Generate'));
+    await tester.tap(find.text('Generate'));
+    await tester.pump();
+    expect(generator.useAgent, isTrue);
+    expect(generator.model, ModelChoice.omniQ2);
+    await generator.output!.close();
+    await tester.pump();
+  });
+
   testWidgets(
     'email preview requires confirmation and reports the actual result',
     (tester) async {

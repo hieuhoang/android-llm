@@ -276,9 +276,9 @@ class LocalTextGenerator implements TextGenerator {
     if (!withProjector && attachments.isNotEmpty) {
       throw ArgumentError('Image and audio input requires the Omni projector.');
     }
-    if (useAgent && (model != ModelChoice.qwen3 || attachments.isNotEmpty)) {
+    if (useAgent && attachments.isNotEmpty) {
       throw ArgumentError(
-        'The offline agent currently supports Qwen3 text only.',
+        'The offline agent supports text only. Remove attachments to use it.',
       );
     }
     _session.maxContextTokens = _contextSizeFor(model);
@@ -301,6 +301,16 @@ class LocalTextGenerator implements TextGenerator {
         );
       }
     }
+    if (useAgent &&
+        _session.history.any(
+          (message) => message.parts.any(
+            (part) => part is LlamaImageContent || part is LlamaAudioContent,
+          ),
+        )) {
+      throw ArgumentError(
+        'The offline agent supports text only. Clear the conversation or turn off the projector to replace previous media with placeholders.',
+      );
+    }
     final previousHistory = _session.history;
     final answer = StringBuffer();
     final thinking = model == ModelChoice.qwen3 && enableReasoning;
@@ -319,6 +329,7 @@ class LocalTextGenerator implements TextGenerator {
           _session,
           prompt,
           enableThinking: thinking,
+          genericToolPrompt: model != ModelChoice.qwen3,
           params: params,
           isCancelled: () => _cancelled,
           onEmailRequest: onEmailRequest,

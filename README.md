@@ -35,15 +35,19 @@ existing projector path; it is off by default.
 model context without unloading the model. The prompt field is cleared after
 each attempt.
 
-**Enable offline agent** gives Qwen3 experimental local date/time and
-calculator tools. The calculator supports addition, subtraction,
+**Enable offline agent** gives Qwen3 and Qwen2.5 Omni experimental local
+date/time and calculator tools. The calculator supports addition, subtraction,
 multiplication and division of two numbers using double-precision
 floating-point arithmetic. Its result is shown separately from the model's
 answer.
 Tool use is off by default, limited to three rounds, and the final reply appears
 after the agent finishes rather than streaming. The model may not reliably
-choose or use the tool. Once the model is downloaded, the agent and its time
+choose or use the tool, or accurately repeat its result; check the separately
+displayed calculator result. Once the model is downloaded, the agent and its time
 tool work without internet.
+Agent turns are text-only. Remove current attachments and clear the
+conversation or turn off the projector if it contains previous media; turning
+off the projector replaces previous media with text placeholders.
 
 On Linux, the agent can also request one Gmail send per turn. The app uses
 the locally installed `gog` CLI and its configured default account and Gmail

@@ -126,7 +126,8 @@ class _PromptScreenState extends State<PromptScreen> {
         _recording ||
         (prompt.isEmpty && _attachments.isEmpty) ||
         ((_model == ModelChoice.qwen3 || !_loadProjector) &&
-            _attachments.isNotEmpty)) {
+            _attachments.isNotEmpty) ||
+        (_useAgent && _attachments.isNotEmpty)) {
       return;
     }
     final turn = _ConversationTurn(prompt, List.of(_attachments));
@@ -163,9 +164,7 @@ class _PromptScreenState extends State<PromptScreen> {
       );
       if (!mounted || _cancelled) return;
       setState(() {
-        _status = _useAgent && _model == ModelChoice.qwen3
-            ? 'Running offline agent...'
-            : 'Generating...';
+        _status = _useAgent ? 'Running offline agent...' : 'Generating...';
         _progress = null;
       });
       await for (final chunk in _generator.generate(
@@ -174,7 +173,7 @@ class _PromptScreenState extends State<PromptScreen> {
         model: _model,
         attachments: turn.attachments,
         loadProjector: _loadProjector,
-        useAgent: _useAgent && _model == ModelChoice.qwen3,
+        useAgent: _useAgent,
         onEmailRequest: _gmailSender == null
             ? null
             : (draft) => _sendEmail(turn, draft),
@@ -530,6 +529,10 @@ class _PromptScreenState extends State<PromptScreen> {
                     const Text(
                       'Remove attachments or enable the image/audio projector to send them.',
                     ),
+                  if (_useAgent && _attachments.isNotEmpty)
+                    const Text(
+                      'Remove attachments or turn off the offline agent to send them.',
+                    ),
                   const SizedBox(height: 12),
                   Text(
                     'Prompt',
@@ -607,11 +610,11 @@ class _PromptScreenState extends State<PromptScreen> {
                     title: const Text('Enable offline agent'),
                     subtitle: Text(
                       Platform.isLinux || Platform.isAndroid
-                          ? 'Qwen3 text only. Can calculate, check the local time and send Gmail (requires internet).'
-                          : 'Qwen3 text only. Can calculate and check the local date and time; replies appear after the agent finishes.',
+                          ? 'Text only. Can calculate, check the local time and send Gmail (requires internet). Clear the conversation or turn off the projector if it contains previous media.'
+                          : 'Text only. Can calculate and check the local date and time; replies appear after the agent finishes. Clear the conversation or turn off the projector if it contains previous media.',
                     ),
-                    value: _model == ModelChoice.qwen3 && _useAgent,
-                    onChanged: _busy || _model != ModelChoice.qwen3
+                    value: _useAgent,
+                    onChanged: _busy
                         ? null
                         : (value) => setState(() {
                             _useAgent = value ?? false;
@@ -666,7 +669,8 @@ class _PromptScreenState extends State<PromptScreen> {
                             (_promptController.text.trim().isEmpty &&
                                 _attachments.isEmpty) ||
                             ((_model == ModelChoice.qwen3 || !_loadProjector) &&
-                                _attachments.isNotEmpty)
+                                _attachments.isNotEmpty) ||
+                            (_useAgent && _attachments.isNotEmpty)
                         ? null
                         : _generate,
                     child: const Text('Generate'),

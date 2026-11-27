@@ -77,58 +77,79 @@ class LocalAgent {
     ChatSession session,
     String prompt, {
     required bool enableThinking,
+    required bool genericToolPrompt,
     required GenerationParams params,
     required bool Function() isCancelled,
     EmailRequest? onEmailRequest,
     void Function(Calculation)? onCalculation,
-  }) {
+  }) async {
     var emailRequested = false;
-    return session.sendWithTools(
-      prompt,
-      tools: [
-        ...tools,
-        _calculatorTool,
-        if (onEmailRequest != null) _gmailTool,
-      ],
-      maxRounds: 3,
-      enableThinking: enableThinking,
-      params: params,
-      onToolCall: (call) async {
-        if (isCancelled()) throw StateError('Agent stopped.');
-        final arguments = jsonDecode(call.rawJson);
-        if (arguments is! Map) {
-          throw const FormatException('Tool arguments must be a JSON object.');
-        }
-        if (call.name == 'calculate') {
-          final calculation = _calculate(arguments);
-          onCalculation?.call(calculation);
-          return {'result': calculation.result};
-        }
-        if (call.name == 'gmail_send' && onEmailRequest != null) {
-          if (emailRequested) {
-            throw StateError('Only one email may be requested per turn.');
-          }
-          emailRequested = true;
-          final draft = _emailDraft(arguments);
+    final availableTools = [
+      ...tools,
+      _calculatorTool,
+      if (onEmailRequest != null) _gmailTool,
+    ];
+    final previousSystemPrompt = session.systemPrompt;
+    if (genericToolPrompt) {
+      session.systemPrompt = [
+        ?previousSystemPrompt,
+        'You can use these tools: ${jsonEncode(availableTools.map((tool) => tool.toJson()).toList())}\n'
+            'To use a tool, reply only with JSON in this format: '
+            '{"tool_call":{"name":"tool name","arguments":{"parameter":"value"}}}. '
+            'Use the tool result to answer. For a final answer, reply only with '
+            '{"response":"your answer"}.',
+      ].join('\n\n');
+    }
+    try {
+      return await session.sendWithTools(
+        prompt,
+        tools: availableTools,
+        maxRounds: 3,
+        enableThinking: enableThinking,
+        params: params,
+        onToolCall: (call) async {
           if (isCancelled()) throw StateError('Agent stopped.');
-          return await onEmailRequest(draft);
-        }
-        if (call.name != 'get_current_time') {
-          throw StateError('Unknown agent tool: ${call.name}.');
-        }
-        if (arguments.isNotEmpty) {
-          throw FormatException('get_current_time does not accept arguments.');
-        }
-        final now = _clock().toLocal();
-        return {
-          'local_time': now.toIso8601String(),
-          'time_zone': now.timeZoneName,
-          'utc_offset_seconds': now.timeZoneOffset.inSeconds,
-        };
-      },
-      onToolError: (call, error, stackTrace) =>
-          Error.throwWithStackTrace(error, stackTrace),
-    );
+          final arguments = jsonDecode(call.rawJson);
+          if (arguments is! Map) {
+            throw const FormatException(
+              'Tool arguments must be a JSON object.',
+            );
+          }
+          if (call.name == 'calculate') {
+            final calculation = _calculate(arguments);
+            onCalculation?.call(calculation);
+            return {'result': calculation.result};
+          }
+          if (call.name == 'gmail_send' && onEmailRequest != null) {
+            if (emailRequested) {
+              throw StateError('Only one email may be requested per turn.');
+            }
+            emailRequested = true;
+            final draft = _emailDraft(arguments);
+            if (isCancelled()) throw StateError('Agent stopped.');
+            return await onEmailRequest(draft);
+          }
+          if (call.name != 'get_current_time') {
+            throw StateError('Unknown agent tool: ${call.name}.');
+          }
+          if (arguments.isNotEmpty) {
+            throw FormatException(
+              'get_current_time does not accept arguments.',
+            );
+          }
+          final now = _clock().toLocal();
+          return {
+            'local_time': now.toIso8601String(),
+            'time_zone': now.timeZoneName,
+            'utc_offset_seconds': now.timeZoneOffset.inSeconds,
+          };
+        },
+        onToolError: (call, error, stackTrace) =>
+            Error.throwWithStackTrace(error, stackTrace),
+      );
+    } finally {
+      session.systemPrompt = previousSystemPrompt;
+    }
   }
 
   Calculation _calculate(Map arguments) {
