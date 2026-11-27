@@ -4,11 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llm_text_app/gmail_sender.dart';
+import 'package:llm_text_app/google_gmail_sender.dart';
 import 'package:llm_text_app/main.dart';
 import 'package:llm_text_app/local_agent.dart';
 import 'package:llm_text_app/media_input.dart';
 import 'package:llm_text_app/text_generator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class FakeMediaInput extends MediaInput {
   final resizeChoices = <(AttachmentKind, bool)>[];
@@ -127,10 +127,12 @@ class FakeGmailSender implements GmailSender {
 class FakeConnectableGmailSender extends FakeGmailSender
     implements ConnectableGmailSender {
   String? clientId;
+  bool failConnection = false;
 
   @override
   Future<void> connect(String clientId) async {
     this.clientId = clientId;
+    if (failConnection) throw StateError('Sign-in failed');
   }
 }
 
@@ -263,10 +265,9 @@ void main() {
     expect(find.text('Calculator: 6 * 3 = 18.0'), findsOneWidget);
   });
 
-  testWidgets('connect Gmail saves the client ID and connects the account', (
+  testWidgets('connect Gmail starts sign-in without asking for a client ID', (
     tester,
   ) async {
-    SharedPreferences.setMockInitialValues({});
     final sender = FakeConnectableGmailSender();
     await tester.pumpWidget(
       LlmTextApp(
@@ -278,18 +279,25 @@ void main() {
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    const clientId = '123-example.apps.googleusercontent.com';
-    await tester.enterText(find.byKey(const Key('gmail-client-id')), clientId);
-    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(sender.clientId, clientId);
-    expect(
-      (await SharedPreferences.getInstance()).getString('gmail_web_client_id'),
-      clientId,
-    );
+    expect(sender.clientId, gmailWebClientId);
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('Gmail connected: sender@example.com'), findsOneWidget);
+  });
+
+  testWidgets('connect Gmail displays sign-in failures', (tester) async {
+    final sender = FakeConnectableGmailSender()..failConnection = true;
+    await tester.pumpWidget(
+      LlmTextApp(
+        generator: FakeGenerator()..loading.complete(),
+        gmailSender: sender,
+      ),
+    );
+    final button = find.widgetWithText(OutlinedButton, 'Connect Gmail');
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+    expect(find.textContaining('Gmail connection failed:'), findsOneWidget);
+    expect(find.textContaining('Sign-in failed'), findsOneWidget);
   });
 
   testWidgets('email send failures remain visible even if generation fails', (

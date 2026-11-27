@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'gmail_sender.dart';
 import 'google_gmail_sender.dart';
@@ -251,52 +250,7 @@ class _PromptScreenState extends State<PromptScreen> {
       _status = 'Preparing Gmail connection...';
     });
     try {
-      final preferences = await SharedPreferences.getInstance();
-      if (!mounted) return;
-      var enteredId = preferences.getString('gmail_web_client_id') ?? '';
-      final clientId = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Connect Gmail'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Enter your Google Cloud web OAuth client ID. Do not enter a client secret.',
-              ),
-              TextFormField(
-                initialValue: enteredId,
-                onChanged: (value) => enteredId = value,
-                key: const Key('gmail-client-id'),
-                decoration: const InputDecoration(
-                  labelText: 'Web OAuth client ID',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, enteredId.trim()),
-              child: const Text('Connect'),
-            ),
-          ],
-        ),
-      );
-      if (!mounted || clientId == null) return;
-      if (!RegExp(r'^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$')
-          .hasMatch(clientId)) {
-        throw const FormatException(
-          'Enter a valid Google web OAuth client ID.',
-        );
-      }
-      if (!await preferences.setString('gmail_web_client_id', clientId)) {
-        throw StateError('Could not save the Google client ID.');
-      }
-      await sender.connect(clientId);
+      await sender.connect(gmailWebClientId);
       final account = await sender.account();
       if (mounted) setState(() => _status = 'Gmail connected: $account');
     } catch (error) {

@@ -56,26 +56,22 @@ model's response. If the result is uncertain, check Gmail's Sent folder before
 retrying; the app never retries a send automatically. Closing the app during a
 send can also leave its outcome uncertain.
 
-On Android, direct Gmail sending uses Google Sign-In and the Gmail API, not the
-Linux `gog` credentials. Before connecting:
+On Android, tap **Connect Gmail**, select your Google account, and grant Gmail
+send access. This uses Google Sign-In and the Gmail API, not Linux `gog`
+credentials. Reconnect after restarting the app or if authorization expires.
+Every message requires confirmation showing the sender, recipient, subject and
+body. A failed or uncertain send must not be retried without checking Sent
+first. iOS Gmail and messaging are not implemented.
 
-1. Enable the Gmail API in a Google Cloud project and configure its OAuth
-   consent screen with the `https://www.googleapis.com/auth/gmail.send` scope.
-   If the app is in Testing, add the Gmail account as a test user.
-2. Create an Android OAuth client for package `com.example.llm_text_app` and
-   the signing certificate's SHA-1. For the default debug build, obtain it with
-   `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`.
-   Other signing keys need their own Android client registration.
-3. In the same project, create a Web application OAuth client. In the Android
-   app, tap **Connect Gmail**, enter the web client ID (not the client secret),
-   then select the Google account and grant Gmail send access.
-
-The public client ID is saved on the device; reconnect Gmail after restarting
-the app or if authorization expires. If changing the client ID after a
-connection attempt, restart the app and connect again. Every message still
-requires confirmation showing the sender, recipient, subject and body. A
-failed or uncertain send must not be retried without checking Sent first.
-iOS Gmail and messaging are not implemented.
+For app maintainers: the public web OAuth client ID is in
+`lib/google_gmail_sender.dart`. Its Google Cloud project must have the Gmail API
+enabled and the `https://www.googleapis.com/auth/gmail.send` scope configured.
+While the app is in Testing, accounts must be added as test users; public
+distribution may require Google's OAuth verification. Register an Android OAuth
+client in the same project for package `com.example.llm_text_app` and each
+signing certificate used to distribute the app. For the default debug key, get
+its SHA-1 with `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`.
+Never put an OAuth client secret in the app.
 
 The Android build time appears at the top of the app in local time. It identifies the
 compiled APK, not subsequent Flutter hot reloads.
