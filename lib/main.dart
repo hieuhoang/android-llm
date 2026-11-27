@@ -88,7 +88,6 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _downsizeImages = false;
   bool _cancelled = false;
   bool _sendingEmail = false;
-  bool _connectingGmail = false;
   double? _progress;
   String? _stopError;
   static const _buildInfo = MethodChannel('llm_text_app/build_info');
@@ -122,7 +121,6 @@ class _PromptScreenState extends State<PromptScreen> {
   Future<void> _generate() async {
     final prompt = _promptController.text.trim();
     if (_busy ||
-        _connectingGmail ||
         _mediaBusy ||
         _recording ||
         (prompt.isEmpty && _attachments.isEmpty) ||
@@ -243,23 +241,6 @@ class _PromptScreenState extends State<PromptScreen> {
     }
   }
 
-  Future<void> _connectGmail(ConnectableGmailSender sender) async {
-    if (_connectingGmail || _busy) return;
-    setState(() {
-      _connectingGmail = true;
-      _status = 'Preparing Gmail connection...';
-    });
-    try {
-      await sender.connect(gmailWebClientId);
-      final account = await sender.account();
-      if (mounted) setState(() => _status = 'Gmail connected: $account');
-    } catch (error) {
-      if (mounted) setState(() => _status = 'Gmail connection failed: $error');
-    } finally {
-      if (mounted) setState(() => _connectingGmail = false);
-    }
-  }
-
   Future<Map<String, String>> _confirmAndSendEmail(
     _ConversationTurn turn,
     GmailDraft draft,
@@ -267,6 +248,9 @@ class _PromptScreenState extends State<PromptScreen> {
     if (!mounted || _cancelled) return {'status': 'cancelled'};
     final String account;
     try {
+      if (_gmailSender is GoogleGmailSender) {
+        setState(() => _status = 'Checking Gmail connection...');
+      }
       account = await _gmailSender!.account();
     } catch (error) {
       if (mounted) {
@@ -277,6 +261,9 @@ class _PromptScreenState extends State<PromptScreen> {
     if (!mounted || _cancelled) {
       if (mounted) setState(() => turn.emailOutcome = 'Email not sent.');
       return {'status': 'cancelled'};
+    }
+    if (_gmailSender is GoogleGmailSender) {
+      setState(() => _status = 'Running offline agent...');
     }
     final approved = await showDialog<bool>(
       context: context,
@@ -628,14 +615,6 @@ class _PromptScreenState extends State<PromptScreen> {
                           }),
                     controlAffinity: ListTileControlAffinity.leading,
                   ),
-                  if (_gmailSender case final ConnectableGmailSender sender)
-                    OutlinedButton(
-                      onPressed:
-                          _busy || _connectingGmail || _mediaBusy || _recording
-                          ? null
-                          : () => _connectGmail(sender),
-                      child: const Text('Connect Gmail'),
-                    ),
                   CheckboxListTile(
                     key: const Key('reasoning-checkbox'),
                     contentPadding: EdgeInsets.zero,
@@ -663,7 +642,6 @@ class _PromptScreenState extends State<PromptScreen> {
                   FilledButton(
                     onPressed:
                         _busy ||
-                            _connectingGmail ||
                             _mediaBusy ||
                             _recording ||
                             (_promptController.text.trim().isEmpty &&

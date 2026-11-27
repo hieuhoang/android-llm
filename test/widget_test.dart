@@ -124,16 +124,20 @@ class FakeGmailSender implements GmailSender {
   }
 }
 
-class FakeConnectableGmailSender extends FakeGmailSender
-    implements ConnectableGmailSender {
-  String? clientId;
-  bool failConnection = false;
+class FakeAutomaticGmailAuthorization implements GmailAuthorization {
+  int connections = 0;
 
   @override
-  Future<void> connect(String clientId) async {
-    this.clientId = clientId;
-    if (failConnection) throw StateError('Sign-in failed');
+  Future<String> ensureConnected(String clientId) async {
+    connections++;
+    return 'sender@example.com';
   }
+
+  @override
+  Future<String?> accessToken() async => 'test-token';
+
+  @override
+  Future<void> invalidateToken(String token) async {}
 }
 
 void main() {
@@ -236,6 +240,44 @@ void main() {
     },
   );
 
+  testWidgets(
+    'connects Gmail on an email request before showing confirmation',
+    (tester) async {
+      final generator = FakeGenerator()..loading.complete();
+      final authorization = FakeAutomaticGmailAuthorization();
+      await tester.pumpWidget(
+        LlmTextApp(
+          generator: generator,
+          gmailSender: GoogleGmailSender(authorization: authorization),
+        ),
+      );
+      expect(authorization.connections, 0);
+      expect(find.text('Connect Gmail'), findsNothing);
+      await tester.enterText(
+        find.byKey(const Key('prompt-input')),
+        'Send email',
+      );
+      await tester.pump();
+      await tester.ensureVisible(find.text('Generate'));
+      await tester.tap(find.text('Generate'));
+      await tester.pump();
+      expect(authorization.connections, 0);
+
+      final request = generator.emailRequest!(
+        const GmailDraft(to: 'recipient@example.com', subject: 'Hi', body: 'x'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(authorization.connections, 1);
+      expect(find.text('From: sender@example.com'), findsOneWidget);
+      await tester.tap(find.text('Do not send'));
+      await tester.pump();
+      expect((await request)['status'], 'declined');
+      await generator.output!.close();
+      await tester.pump();
+    },
+  );
+
   testWidgets('prompt input grows to at most two lines', (tester) async {
     final generator = FakeGenerator()..loading.complete();
     await tester.pumpWidget(LlmTextApp(generator: generator));
@@ -263,41 +305,6 @@ void main() {
     await tester.pump();
     expect(find.text('Eighteen'), findsOneWidget);
     expect(find.text('Calculator: 6 * 3 = 18.0'), findsOneWidget);
-  });
-
-  testWidgets('connect Gmail starts sign-in without asking for a client ID', (
-    tester,
-  ) async {
-    final sender = FakeConnectableGmailSender();
-    await tester.pumpWidget(
-      LlmTextApp(
-        generator: FakeGenerator()..loading.complete(),
-        gmailSender: sender,
-      ),
-    );
-    final button = find.widgetWithText(OutlinedButton, 'Connect Gmail');
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pump();
-    expect(sender.clientId, gmailWebClientId);
-    expect(find.byType(AlertDialog), findsNothing);
-    expect(find.text('Gmail connected: sender@example.com'), findsOneWidget);
-  });
-
-  testWidgets('connect Gmail displays sign-in failures', (tester) async {
-    final sender = FakeConnectableGmailSender()..failConnection = true;
-    await tester.pumpWidget(
-      LlmTextApp(
-        generator: FakeGenerator()..loading.complete(),
-        gmailSender: sender,
-      ),
-    );
-    final button = find.widgetWithText(OutlinedButton, 'Connect Gmail');
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pump();
-    expect(find.textContaining('Gmail connection failed:'), findsOneWidget);
-    expect(find.textContaining('Sign-in failed'), findsOneWidget);
   });
 
   testWidgets('email send failures remain visible even if generation fails', (

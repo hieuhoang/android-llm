@@ -19,10 +19,6 @@ abstract interface class GmailSender {
   Future<String> send(GmailDraft draft, {required String from});
 }
 
-abstract interface class ConnectableGmailSender implements GmailSender {
-  Future<void> connect(String clientId);
-}
-
 final _emailPattern = RegExp(
   r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$",
 );

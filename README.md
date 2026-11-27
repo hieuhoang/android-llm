@@ -56,12 +56,13 @@ model's response. If the result is uncertain, check Gmail's Sent folder before
 retrying; the app never retries a send automatically. Closing the app during a
 send can also leave its outcome uncertain.
 
-On Android, tap **Connect Gmail**, select your Google account, and grant Gmail
-send access. This uses Google Sign-In and the Gmail API, not Linux `gog`
-credentials. Reconnect after restarting the app or if authorization expires.
-Every message requires confirmation showing the sender, recipient, subject and
-body. A failed or uncertain send must not be retried without checking Sent
-first. iOS Gmail and messaging are not implemented.
+On Android, the app connects to Gmail when an email is requested. It attempts
+to restore the previous sign-in; Google may ask you to select an account or
+grant Gmail send access when needed. This uses Google Sign-In and the Gmail API,
+not Linux `gog` credentials. Every message requires confirmation showing the
+sender, recipient, subject and body. A failed or uncertain send must not be
+retried without checking Sent first. iOS Gmail and messaging are not
+implemented.
 
 For app maintainers: the public web OAuth client ID is in
 `lib/google_gmail_sender.dart`. Its Google Cloud project must have the Gmail API
