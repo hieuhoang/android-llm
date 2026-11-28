@@ -162,16 +162,13 @@ void main() {
         .setMockMethodCallHandler(buildChannel, null);
   });
 
-  testWidgets('offline agent is opt-in and passed to generation', (
+  testWidgets('offline agent is enabled by default and passed to generation', (
     tester,
   ) async {
     final generator = FakeGenerator()..loading.complete();
     await tester.pumpWidget(LlmTextApp(generator: generator));
     final checkbox = find.byKey(const Key('agent-checkbox'));
-    expect(tester.widget<CheckboxListTile>(checkbox).value, isFalse);
-    await tester.ensureVisible(checkbox);
-    await tester.tap(checkbox);
-    await tester.pump();
+    expect(tester.widget<CheckboxListTile>(checkbox).value, isTrue);
     await tester.enterText(find.byKey(const Key('prompt-input')), 'What time?');
     await tester.pump();
     await tester.ensureVisible(find.text('Generate'));
@@ -197,8 +194,6 @@ void main() {
     await tester.pumpAndSettle();
     final agent = find.byKey(const Key('agent-checkbox'));
     await tester.ensureVisible(agent);
-    await tester.tap(agent);
-    await tester.pumpAndSettle();
     expect(tester.widget<CheckboxListTile>(agent).value, isTrue);
     await tester.ensureVisible(find.text('Add image'));
     await tester.tap(find.text('Add image'));
@@ -231,14 +226,11 @@ void main() {
       await tester.pumpWidget(
         LlmTextApp(generator: generator, gmailSender: sender),
       );
-      expect(
-        tester
-            .widget<CheckboxListTile>(
-              find.byKey(const Key('confirm-email-checkbox')),
-            )
-            .value,
-        isTrue,
-      );
+      final checkbox = find.byKey(const Key('confirm-email-checkbox'));
+      expect(tester.widget<CheckboxListTile>(checkbox).value, isFalse);
+      await tester.ensureVisible(checkbox);
+      await tester.tap(checkbox);
+      await tester.pump();
       await tester.enterText(
         find.byKey(const Key('prompt-input')),
         'Send email',
@@ -303,9 +295,6 @@ void main() {
       LlmTextApp(generator: generator, gmailSender: sender),
     );
     final checkbox = find.byKey(const Key('confirm-email-checkbox'));
-    await tester.ensureVisible(checkbox);
-    await tester.tap(checkbox);
-    await tester.pump();
     expect(tester.widget<CheckboxListTile>(checkbox).value, isFalse);
     await tester.enterText(find.byKey(const Key('prompt-input')), 'Send email');
     await tester.pump();
@@ -351,10 +340,6 @@ void main() {
     await tester.pumpWidget(
       LlmTextApp(generator: generator, gmailSender: sender),
     );
-    final checkbox = find.byKey(const Key('confirm-email-checkbox'));
-    await tester.ensureVisible(checkbox);
-    await tester.tap(checkbox);
-    await tester.pump();
     await tester.enterText(find.byKey(const Key('prompt-input')), 'Send email');
     await tester.pump();
     await tester.ensureVisible(find.text('Generate'));
@@ -388,6 +373,10 @@ void main() {
       );
       expect(authorization.connections, 0);
       expect(find.text('Connect Gmail'), findsNothing);
+      final checkbox = find.byKey(const Key('confirm-email-checkbox'));
+      await tester.ensureVisible(checkbox);
+      await tester.tap(checkbox);
+      await tester.pump();
       await tester.enterText(
         find.byKey(const Key('prompt-input')),
         'Send email',
@@ -450,6 +439,10 @@ void main() {
     await tester.pumpWidget(
       LlmTextApp(generator: generator, gmailSender: sender),
     );
+    final checkbox = find.byKey(const Key('confirm-email-checkbox'));
+    await tester.ensureVisible(checkbox);
+    await tester.tap(checkbox);
+    await tester.pump();
     await tester.enterText(find.byKey(const Key('prompt-input')), 'Send email');
     await tester.pump();
     await tester.ensureVisible(find.text('Generate'));
@@ -612,6 +605,7 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('prompt-input')), ' Hello ');
     await tester.pump();
+    await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pump();
     expect(tester.widget<FilledButton>(button).onPressed, isNull);
@@ -630,7 +624,7 @@ void main() {
     generator.loading.complete();
     await tester.pump();
     expect(generator.prompt, 'Hello');
-    expect(generator.reasoningEnabled, isTrue);
+    expect(generator.reasoningEnabled, isFalse);
     expect(
       tester
           .widget<CheckboxListTile>(find.byKey(const Key('reasoning-checkbox')))
@@ -660,19 +654,21 @@ void main() {
     expect(find.text('Hello'), findsOneWidget);
     expect(tester.widget<FilledButton>(button).onPressed, isNull);
 
+    await tester.ensureVisible(find.text('Enable reasoning'));
     await tester.tap(find.text('Enable reasoning'));
     await tester.pump();
     expect(
       tester
           .widget<CheckboxListTile>(find.byKey(const Key('reasoning-checkbox')))
           .value,
-      isFalse,
+      isTrue,
     );
     await tester.enterText(find.byKey(const Key('prompt-input')), 'Follow up');
     await tester.pump();
+    await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pump();
-    expect(generator.reasoningEnabled, isFalse);
+    expect(generator.reasoningEnabled, isTrue);
     generator.output!.add(const GenerationChunk(text: 'Second response'));
     await generator.output!.close();
     await tester.pump();
@@ -823,6 +819,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Qwen2.5 Omni 3B Q2_K').last);
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('agent-checkbox')));
+    await tester.tap(find.byKey(const Key('agent-checkbox')));
+    await tester.pumpAndSettle();
     expect(
       tester
           .widget<CheckboxListTile>(find.byKey(const Key('reasoning-checkbox')))
@@ -897,6 +896,9 @@ void main() {
       await tester.tap(find.byType(DropdownButtonFormField<ModelChoice>));
       await tester.pumpAndSettle();
       await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('agent-checkbox')));
+      await tester.tap(find.byKey(const Key('agent-checkbox')));
       await tester.pumpAndSettle();
       expect(
         tester

@@ -80,9 +80,9 @@ class _PromptScreenState extends State<PromptScreen> {
   bool _busy = false;
   bool _mediaBusy = false;
   bool _recording = false;
-  bool _enableReasoning = true;
-  bool _useAgent = false;
-  bool _confirmEmail = true;
+  bool _enableReasoning = false;
+  bool _useAgent = true;
+  bool _confirmEmail = false;
   bool _useGpu = false;
   bool _loadProjector = true;
   bool _stagedMultimodal = false;

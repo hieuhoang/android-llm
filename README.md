@@ -10,7 +10,7 @@ in later requests while they fit in the context window; the oldest turns are
 removed as needed. Conversation history is kept in memory and is lost when the
 app restarts. The conversation display retains older turns even when they no
 longer fit in the model context. The **Enable reasoning** checkbox controls
-thinking for each new Qwen3 request; it is enabled by default. Omni does not
+thinking for each new Qwen3 request; it is disabled by default. Omni does not
 support this reasoning mode. Generated reasoning is displayed,
 but excluded from later requests, following Qwen's recommendation. A stopped
 response may be retained as a partial turn; a turn with no final answer is not
@@ -40,7 +40,7 @@ date/time and calculator tools. The calculator supports addition, subtraction,
 multiplication and division of two numbers using double-precision
 floating-point arithmetic. Its result is shown separately from the model's
 answer.
-Tool use is off by default, limited to three rounds, and the final reply appears
+Tool use is on by default, limited to three rounds, and the final reply appears
 after the agent finishes rather than streaming. The model may not reliably
 choose or use the tool, or accurately repeat its result; check the separately
 displayed calculator result. Once the model is downloaded, the agent and its time
@@ -54,10 +54,10 @@ the locally installed `gog` CLI and its configured default account and Gmail
 authorization; it looks for `~/go/bin/gog` first, then `gog` on PATH. The
 app must inherit any environment needed by the gog keyring, and sending
 requires internet access. Check `gog auth status` and configure Gmail access
-if needed. By default, before sending, the app displays the sender, recipient,
-subject and body for explicit confirmation. Uncheck **Confirm before sending
-Gmail** to let the agent send without review; this setting resets when the app
-restarts. The send result appears separately from the model's response. If the
+if needed. By default the agent can send without review. Check **Confirm before
+sending Gmail** to review the sender, recipient, subject and body before sending;
+this setting resets to unchecked when the app restarts. The send result appears
+separately from the model's response. If the
 result is uncertain, check Gmail's Sent folder before
 retrying; the app never retries a send automatically. Closing the app during a
 send can also leave its outcome uncertain.

@@ -11,12 +11,6 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const LlmTextApp());
-    await tester.ensureVisible(find.byKey(const Key('agent-checkbox')));
-    await tester.tap(find.byKey(const Key('agent-checkbox')));
-    await tester.pump();
-    await tester.ensureVisible(find.byKey(const Key('reasoning-checkbox')));
-    await tester.tap(find.byKey(const Key('reasoning-checkbox')));
-    await tester.pump();
     await tester.ensureVisible(find.byKey(const Key('prompt-input')));
     await tester.enterText(
       find.byKey(const Key('prompt-input')),
